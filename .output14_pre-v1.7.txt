@@ -1,0 +1,25 @@
+Generating patch (43 lines) in project_brief.md
+Read project_brief.md, lines 1 to 80
+Read project_brief.md, lines 81 to 179
+Generating patch (40 lines) in project_brief.md
+```
+```
+```
+```
+project_brief.md (/c:/nbs/afish/project_brief.md)
+is now bumped to brief_version: 1.7. All 9 design rulings are locked as D-044–D-053 in the DECISIONS block. S-008 session log appended.
+Brief Changelog — v1.6 → v1.7
+Area Change
+Header/§1 brief_version: 1.7
+§6 DECISIONS D-044 Equipment/Entity Triangle schema (Rod, Lure, Fish strict partition, math rules)
+ D-045 Rod Power: 7-step ladder (UL, L, ML, M, MH, H, XH)
+ D-046 Lure Categories: All 9 day-one (CRANKBAIT, JIG, WORM, SPINNERBAIT, etc.)
+ D-047 Fish Fight Styles: All 5 day-one (BULLDOG, RUNNER, JUMPER, DIVER, THRASHER)
+ D-048 Species Affinity: Hand-tuned per lure
+ D-049 Lure Memory: Time-decay, 60s forget, no count cap
+ D-050 Hookset Window: 300ms absolute hard floor
+ D-051 Live Bait: Consumable, vigor degrades per cast/nibble/time
+ D-052 Mismatched Lure: Accuracy penalty only (no distance/Bird's Nest)
+ D-053 Diurnal Multipliers: Hand-tuned per species
+§14 SESSION S-008: Phase 2 data modeling complete, all above locked, NO CODE LOCK respected
+No code generated. STRICT NO CODE LOCK remains in force.

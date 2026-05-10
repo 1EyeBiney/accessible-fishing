@@ -1,0 +1,85 @@
+Semantic workspace search is not currently available
+STRICT NO CODE LOCK acknowledged. No files will be written. Below is a full architectural analysis and schema expansion for the Tournament & Lake data model, with explicit hooks to the existing hub state and tournament/payout.js.
+1. Tournament Event Schema (Expanded)
+```
+{
+  "id": "TOURNEY_LOCAL_POND_01",
+  "name": "Weekend Beginner's Bash",
+  "tier": 1,                        // 1 (rookie) to 5 (pro circuit)
+  "lakeId": "LAKE_WHISPERING_PINES",// Foreign key to Lake schema
+  "entryFee": 0,                    // Money required to enter
+  "rules": {
+    "durationMin": 240,             // In-game minutes
+    "winCondition": "HEAVIEST_BAG", // HEAVIEST_BAG | BIGGEST_FISH | TOTAL_CATCH_COUNT
+    "targetSpecies": "ANY",         // Or speciesBand (e.g., "BASS_LM")
+    "competitorCount": 5,           // Player + N-1 AI bots
+    "bagLimit": 5                   // Max fish in bag (optional, for HEAVIEST_BAG)
+  },
+  "prizes": {
+    "1st": { "type": "GEAR", "itemId": "ROD_MED_FIBERGLASS_01" },
+    "2nd": { "type": "MONEY", "amount": 50 }
+    // ...expandable for 3rd, 4th, etc.
+  },
+  "environmentInjection": {
+    "season": "SPRING",             // SPRING | SUMMER | FALL | WINTER
+    "weather": "OVERCAST",          // CLEAR | OVERCAST | RAIN | WINDY
+    "startingTimeOfDay": "MORNING"  // DAWN | MORNING | NOON | AFTERNOON | DUSK
+  },
+  "aiGearTier": 1                   // All AI bots in this event use this gear tier (Arms Race model)
+}
+```
+2. Lake Schema (Proposed)
+```
+{
+  "id": "LAKE_WHISPERING_PINES",
+  "name": "Whispering Pines",
+  "size": "SMALL",                  // SMALL | MEDIUM | LARGE
+  "poiList": [
+    { "id": "DOCK_NORTH", "type": "DOCK", "label": "North Dock" },
+    { "id": "COVE_EAST", "type": "COVE", "label": "East Cove" }
+    // ...more POIs
+  ],
+  "tileTraits": { /* see D-037, locked tile schema */ },
+  "speciesPresent": ["BASS_LM", "BASS_SM", "CRAPPIE", "CATFISH"],
+  "seasonalProfiles": {
+    "SPRING": { /* modifies fish activity, cover, etc. */ },
+    "SUMMER": { /* ... */ }
+  },
+  "defaultWeather": "CLEAR"
+}
+```
+3. Career Progression & Hub State
+**Player Progression**: Player's `profile` and `hub` state tracks:
+- `unlockedTournaments: [tourneyId, ...]`
+- `currentMoney`
+- `ownedGear: [itemId, ...]`
+- `activeRodId`, `activeLureId`, etc.
+- `calendarDay` (for AI arms race and event unlocks)
+**Tournament Unlocking**: Tournaments are unlocked by winning/loss, calendar progression, or explicit purchases.
+**Entry Fees**: Deducted from `hub.money` on entry. If insufficient, entry is blocked.
+**Prize Distribution**: On tournament end, `tournament/payout.js` awards prizes to player based on final standing. AI bots do NOT receive or spend money—only their `aiGearTier` is advanced as the calendar progresses.
+4. Arms Race AI Model
+**AI Gear Tier**: Each tournament event specifies an `aiGearTier` (1–5). All AI bots in that event use this tier, regardless of prior results.
+**Calendar Progression**: As the player advances the in-game calendar (by entering tournaments or via explicit time skips), future tournaments increase their `aiGearTier` to simulate the arms race.
+**No AI Wallets**: AI bots do not have persistent money, inventory, or progression. Their challenge is set by the event's `aiGearTier`.
+5. Integration Points
+**hub/**: Manages player inventory, money, unlocked tournaments, and calendar. Tournament entry checks and prize claims are routed through hub state.
+**tournament/payout.js**: Reads the event's `prizes` block and the player's final standing to award gear or money. No AI payout logic required.
+**tournament/leaderboard.js**: Ranks player and AI bots by event win condition (heaviest bag, biggest fish, etc.).
+**ai/**: Each bot is instantiated with the event's `aiGearTier` and a personality profile (to be modeled in Phase 3).
+6. Architectural Benefits
+**Replayability**: Static lakes + dynamic tournaments + arms race AI = infinite replay without simulating AI economies.
+**Performance**: No need to track AI wallets, inventories, or persistent state. All AI challenge is event-driven.
+**Balance**: Player always has a clear goal: outpace the AI arms race by winning, earning, and upgrading before the next tier.
+7. Example Tournament Flow
+Player enters "Weekend Beginner's Bash" (tier 1, aiGearTier 1, entryFee 0).
+On win, player receives new rod (prize), unlocks next tournament.
+Calendar advances; next event has aiGearTier 2.
+Player must upgrade gear to keep pace or risk being outclassed.
+8. Open Questions for Brief Lock-In
+Should tournaments be repeatable, or locked after first win?
+Can the player skip calendar days to manipulate AI gear progression?
+Are there special events (e.g., "Legendary Fish Hunt") with unique rules or one-off prizes?
+Should lakes have dynamic weather/season per event, or always use the event's `environmentInjection`?
+Is there a cap on the number of tournaments per in-game year?
+No code generated. STRICT NO CODE LOCK respected. Ready for schema lock-in or further directives.
