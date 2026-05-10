@@ -1,0 +1,37 @@
+Semantic workspace search is not currently available
+Thinking: Let me read the project brief to understand the full context for Phase 3, specifically sections related to navigation, boats, motors, and wind.
+Reading from brief v1.13.
+Read project_brief.md, lines 1 to 100
+Read project_brief.md, lines 100 to 230
+Read project_brief.md, lines 230 to 280
+Read clock.js, lines 1 to 60
+Read clock.js, lines 60 to 140
+Read rng.js, lines 60 to 150
+Created 3 todos. 3 items: Create src/navigation/wind.js (in-progress); Create src/navigation/motor.js (not-started); Create src/navigation/navigation.js (not-started)
+Created wind.js
+Starting: Create src/navigation/motor.js (2/3). 3 items: Create src/navigation/wind.js (completed); Create src/navigation/motor.js (in-progress); Create src/navigation/navigation.js (not-started)
+Created motor.js
+Starting: Create src/navigation/navigation.js (3/3). 3 items: Create src/navigation/wind.js (completed); Create src/navigation/motor.js (completed); Create src/navigation/navigation.js (in-progress)
+Created navigation.js
+Created wind.js
+Completed: Create src/navigation/navigation.js (3/3). 3 items: Create src/navigation/wind.js (completed); Create src/navigation/motor.js (completed); Create src/navigation/navigation.js (completed)
+Phase 3 complete. Three files written:
+**
+src/navigation/wind.js (/c:/nbs/afish/src/navigation/wind.js)
+** — Deterministic wind sampler. Three-layer sinusoidal model (base/gust/chop at 1200s/180s/30s periods) seeded from
+rngStream('wind') (c:\nbs\afish\src\core\rng.js:119)
+.
+sample(atMs) (c:\nbs\afish\src\core\clock.js:147)
+is pure and O(1) — same
+(seed, atMs) (c:\nbs\afish\src\core\rng.js:42)
+always returns the same vector. Exports compassLabel() and intensityLabel() for TTS. D-012 cast wind lock is trivially satisfied by the caller caching sample(tapOneAtMs).
+**
+src/navigation/motor.js (/c:/nbs/afish/src/navigation/motor.js)
+** — Dual-propulsion state manager. Outboard (fuel) and Trolling (battery) motors, each with configurable stat-block params.
+consume(distance, motorKind, atMs) (c:\nbs\afish\src\core\clock.js:147)
+returns { actualDistance, fuelUsed, batteryUsed, outOfFuel, outOfBattery }. Low-warning events fire once per crossing. Reducers registered for MOTOR_STATE_CHANGED and MOTOR_INITIALISED.
+**
+src/navigation/navigation.js (/c:/nbs/afish/src/navigation/navigation.js)
+** — Position owner and physics driver. Implements the full H-001 pipeline in driftStep(dt) (Wind → Current → Station → Integrate → Boundary), D-040 repositioning penalty via
+clock.tick(300_000) (c:\nbs\afish\src\core\clock.js:23)
+, D-007 shallow-water outboard block in requestTravel(), D-003 station modes in station(), and D-002 numpad nudge via nudge(). Also exports placeAt() for tournament-start positioning.

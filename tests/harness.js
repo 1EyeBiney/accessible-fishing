@@ -2,7 +2,7 @@
  * AFish Integration Test Harness — tests/harness.js
  *
  * Exercises Phase 0 (src/core/*), Phase 1 (src/engine.js, src/profile/profileStore.js),
- * and Phase 2 (src/world/*) contracts in sequence.
+ * Phase 2 (src/world/*), and Phase 3 (src/navigation/*) contracts in sequence.
  *
  * Run with:  node tests/harness.js
  *        or: npm run harness
@@ -42,6 +42,15 @@ import * as profileStore from '../src/profile/profileStore.js';
 import * as worldMap       from '../src/world/worldMap.js';
 import * as poiGraph       from '../src/world/poiGraph.js';
 import * as structureIndex from '../src/world/structureIndex.js';
+
+// ---------------------------------------------------------------------------
+// Phase 3 — navigation & equipment
+// (importing navigation.js also transitively imports equipment/boats.js which
+//  registers the HUB_ACTIVE_BOAT_SET reducer)
+// ---------------------------------------------------------------------------
+import * as wind       from '../src/navigation/wind.js';
+import * as motor      from '../src/navigation/motor.js';
+import * as navigation from '../src/navigation/navigation.js';
 
 // ---------------------------------------------------------------------------
 // Harness bookkeeping
@@ -127,6 +136,9 @@ function resetAll() {
   worldMap._clear();
   poiGraph._clear();
   structureIndex._clear();
+  // Phase 3 resets
+  wind.invalidateModel();    // clear cached wind session model (depends on rng seed)
+  motor._resetWarnings();    // clear MOTOR_FUEL_LOW / MOTOR_BATTERY_LOW sentinels
 }
 
 // ===========================================================================
@@ -624,6 +636,410 @@ assertEqual(leakResult.listenerLeaks, 0,
   '4b. H-005 listenerLeaks === 0');
 assertEqual(leakResult.clockLeaks, 0,
   '4c. H-005 clockLeaks === 0');
+
+// ===========================================================================
+// SECTION 5: Wind & Motor Mechanics
+// ===========================================================================
+section('WIND & MOTOR MECHANICS');
+resetAll();
+rng.seed(KNOWN_SEED);
+
+// ── 5a. wind.sample() schema ────────────────────────────────────────────────
+const w1 = wind.sample(5_000);
+
+assert(typeof w1.directionDeg === 'number',
+  '5a. wind.sample() returns numeric directionDeg');
+assert(w1.directionDeg >= 0 && w1.directionDeg < 360,
+  `5a. directionDeg is in [0, 360)  (got: ${w1.directionDeg.toFixed(2)})`);
+assert(typeof w1.intensityMs === 'number' && w1.intensityMs >= 0 && w1.intensityMs <= wind.MAX_WIND_INTENSITY_MS,
+  `5a. intensityMs is in [0, MAX_WIND_INTENSITY_MS]  (got: ${w1.intensityMs})`);
+assert(typeof w1.dx === 'number' && Math.abs(w1.dx) <= 1,
+  `5a. dx is a number in [-1, 1]  (got: ${w1.dx})`);
+assert(typeof w1.dy === 'number' && Math.abs(w1.dy) <= 1,
+  `5a. dy is a number in [-1, 1]  (got: ${w1.dy})`);
+assert(w1.gustLevel >= 0 && w1.gustLevel <= 1,
+  `5a. gustLevel is in [0, 1]  (got: ${w1.gustLevel})`);
+assertEqual(w1.atMs, 5_000, '5a. atMs is echoed through in the return value');
+
+// Sanity-check that (dx, dy) is a proper unit vector (or zero vector when calm)
+const unitLen = Math.hypot(w1.dx, w1.dy);
+assert(
+  w1.intensityMs < 0.001 || (unitLen > 0.99 && unitLen <= 1.01),
+  `5a. (dx, dy) is a unit vector when wind is non-zero  (hypot=${unitLen.toFixed(6)})`,
+);
+console.log(`      wind at t=5000: dir=${w1.directionDeg}° ` +
+            `int=${w1.intensityMs} m/s gust=${w1.gustLevel}`);
+
+// ── 5b. wind.sample() is deterministic for the same timestamp ───────────────
+const w2 = wind.sample(5_000);
+assertEqual(w1.directionDeg, w2.directionDeg,
+  '5b. wind.sample(5000) directionDeg is identical on second call');
+assertEqual(w1.intensityMs, w2.intensityMs,
+  '5b. wind.sample(5000) intensityMs is identical on second call');
+assertEqual(w1.gustLevel, w2.gustLevel,
+  '5b. wind.sample(5000) gustLevel is identical on second call');
+
+// ── 5c. Different timestamps produce different wind vectors ─────────────────
+// Use a gap of half the CHOP period (15 000 ms) — the fastest sinusoidal layer
+// has period 30 000 ms, so at t=5000 and t=20000 we are at very different phase.
+const w3 = wind.sample(20_000);
+assert(
+  w3.directionDeg !== w1.directionDeg || w3.intensityMs !== w1.intensityMs,
+  '5c. wind.sample(20000) differs from wind.sample(5000) (time-varying)',
+);
+console.log(`      wind at t=20000: dir=${w3.directionDeg}° int=${w3.intensityMs} m/s`);
+
+// ── 5d. Different RNG seed → different session wind fingerprint ─────────────
+rng.seed(KNOWN_SEED + 1);
+wind.invalidateModel();          // force model rebuild with new seed
+const w4 = wind.sample(5_000);
+assert(
+  w4.directionDeg !== w1.directionDeg || w4.intensityMs !== w1.intensityMs,
+  '5d. Different RNG seed produces different wind vector at the same timestamp',
+);
+console.log(`      wind(seed+1)@5000: dir=${w4.directionDeg}° int=${w4.intensityMs} m/s`);
+
+// Restore canonical seed for the motor tests below
+rng.seed(KNOWN_SEED);
+wind.invalidateModel();
+
+// ── 5e. motor.initialise() populates state.tournament.motor ─────────────────
+motor.initialise({ fuelCapacityL: 20, fuelPerTile: 0.5 });
+const motorState = stateStore.getState().tournament.motor;
+assert(motorState !== undefined,
+  '5e. motor.initialise() creates state.tournament.motor partition');
+assertEqual(motorState.fuelLitres, 20,
+  '5e. fuelLitres is fuelCapacityL (starts full)');
+assertEqual(motorState.fuelCapacity, 20,
+  '5e. fuelCapacity recorded correctly');
+
+// ── 5f. fuelRemaining() and batteryRemaining() read from stateStore ──────────
+assertEqual(motor.fuelRemaining(), 20,
+  '5f. motor.fuelRemaining() returns 20 after initialise(20L)');
+assertEqual(motor.batteryRemaining(), 100,
+  '5f. motor.batteryRemaining() returns 100 after initialise');
+
+// ── 5g. consume(distance, OUTBOARD) correctly reduces fuel ──────────────────
+// 4 tiles × 0.5 L/tile = 2 L consumed; 20 - 2 = 18 L remaining
+const consumeResult = motor.consume(4, 'OUTBOARD', 0);
+assertEqual(consumeResult.actualDistance, 4,
+  '5g. consume() actualDistance equals requested distance when fuel is sufficient');
+assert(!consumeResult.outOfFuel,
+  '5g. consume() outOfFuel is false when fuel is sufficient');
+assertEqual(consumeResult.fuelUsed, 2,
+  '5g. consume() fuelUsed is distance × fuelPerTile (4 × 0.5 = 2)');
+assertEqual(consumeResult.batteryUsed, 0,
+  '5g. consume(OUTBOARD) batteryUsed is 0');
+
+// ── 5h. fuelRemaining() reflects consumption ────────────────────────────────
+assertEqual(motor.fuelRemaining(), 18,
+  '5h. fuelRemaining() is 18 after consuming 2L');
+
+// ── 5i. fuelFraction() returns normalised level ─────────────────────────────
+const frac = motor.fuelFraction();
+assert(Math.abs(frac - 0.9) < 0.0001,
+  `5i. fuelFraction() is 0.9 after consuming 2/20 L  (got: ${frac})`);
+
+// ── 5j. consume(distance, TROLLING) drains battery ─────────────────────────
+// 10 tiles × 0.5 %/tile = 5 % drained; 100 - 5 = 95 %
+const trollResult = motor.consume(10, 'TROLLING', 0);
+assertEqual(trollResult.batteryUsed, 5,
+  '5j. consume(TROLLING) batteryUsed is distance × batteryDrainPct (10 × 0.5 = 5)');
+assert(!trollResult.outOfBattery,
+  '5j. consume(TROLLING) outOfBattery is false when charge is sufficient');
+assertEqual(trollResult.fuelUsed, 0,
+  '5j. consume(TROLLING) fuelUsed is 0');
+
+// ── 5k. batteryRemaining() reflects trolling drain ──────────────────────────
+assertEqual(motor.batteryRemaining(), 95,
+  '5k. batteryRemaining() is 95 after draining 5%');
+
+// ── 5l. Out-of-fuel: outOfFuel=true, actualDistance reflects partial travel ─
+// fuelRemaining = 18 L; request 100 tiles × 0.5 = 50 L needed
+const drainResult = motor.consume(100, 'OUTBOARD', 0);
+assert(drainResult.outOfFuel,
+  '5l. consume(100 tiles) outOfFuel is true when only 18L remain (50L needed)');
+assert(drainResult.actualDistance < 100,
+  `5l. actualDistance < requested distance when fuel runs out  (got: ${drainResult.actualDistance})`);
+// actualDistance = 18L / 0.5 L/tile = 36 tiles
+assert(Math.abs(drainResult.actualDistance - 36) < 0.01,
+  `5l. actualDistance is 36 tiles (18L ÷ 0.5 L/tile)  (got: ${drainResult.actualDistance})`);
+
+// ── 5m. fuelRemaining() is 0 after draining the tank ───────────────────────
+assertEqual(motor.fuelRemaining(), 0,
+  '5m. fuelRemaining() is 0 after the tank is exhausted');
+assert(!motor.canUseOutboard(1),
+  '5m. canUseOutboard(1) returns false when fuel is 0');
+
+// ── 5n. MOTOR_FUEL_LOW event fires when fuel crosses the 20% threshold ──────
+// Reinitialise with a fresh 10 L tank (threshold = 2 L)
+motor.initialise({ fuelCapacityL: 10, fuelPerTile: 1.0 });
+let fuelLowFired = false;
+const unsubFuelLow = bus.on('MOTOR_FUEL_LOW', () => { fuelLowFired = true; });
+// Consume 9 tiles × 1 L/tile = 9 L → 1 L remaining = 10% < 20% threshold
+motor.consume(9, 'OUTBOARD', 0);
+unsubFuelLow();
+assert(fuelLowFired,
+  '5n. MOTOR_FUEL_LOW bus event fires when fuel level falls below 20% of capacity');
+
+// ===========================================================================
+// SECTION 6: Navigation Physics & Penalties
+// ===========================================================================
+section('NAVIGATION PHYSICS & PENALTIES');
+resetAll();
+rng.seed(KNOWN_SEED);
+
+// ── World setup for Section 6 ───────────────────────────────────────────────
+// Three POIs: HOME (deep, large frame), SPOT (deep, for travel target),
+//             SHALLOW_POOL (shallow, for D-007 override test)
+// Tiles are registered at each POI's centerCoord so _currentTile() resolves correctly.
+
+const HOME_POI_ID    = 'POI_HOME';
+const SPOT_POI_ID    = 'POI_SPOT';
+const SHALLOW_POI_ID = 'POI_SHALLOW_POOL';
+
+// Tile at HOME center (0, 0) — deep water, safe for all boats
+worldMap.registerTile({
+  id:    'T_HOME_CENTER',
+  coord: { x: 0, y: 0 },
+  traits: {
+    depth:  { bottomM: 5.0, minM: 3.5, maxM: 6.0, slopeDeg: 5 },
+    bottom: { primary: 'GRAVEL', secondary: 'ROCK', hardness: 0.8 },
+    cover:  { type: 'NONE', density: 0, canopyDepthM: 0, snagRisk: 0, shadeFactor: 0 },
+    tags:   ['OPEN_FLAT'],
+    reach:  { fromDockMin: 0, draftClass: 'DEEP' },
+  },
+});
+
+// Tile at SPOT center (10, 0) — deep water
+worldMap.registerTile({
+  id:    'T_SPOT_CENTER',
+  coord: { x: 10, y: 0 },
+  traits: {
+    depth:  { bottomM: 4.0, minM: 3.0, maxM: 5.0, slopeDeg: 3 },
+    bottom: { primary: 'SAND', secondary: null, hardness: 0.3 },
+    cover:  { type: 'WEEDBED', density: 0.4, canopyDepthM: 0.5, snagRisk: 0.2, shadeFactor: 0.1 },
+    tags:   ['WEEDBED_EDGE'],
+    reach:  { fromDockMin: 5, draftClass: 'DEEP' },
+  },
+});
+
+// Tile at SHALLOW_POOL center (20, 0) — very shallow: minM=0.35
+// Bass boat shallowDraftMin=0.70 → 0.35 < 0.70 → D-007 fires
+worldMap.registerTile({
+  id:    'T_SHALLOW_CENTER',
+  coord: { x: 20, y: 0 },
+  traits: {
+    depth:  { bottomM: 0.50, minM: 0.35, maxM: 0.70, slopeDeg: 2 },
+    bottom: { primary: 'MUD', secondary: null, hardness: 0.1 },
+    cover:  { type: 'LILYPADS', density: 0.7, canopyDepthM: 0.2, snagRisk: 0.5, shadeFactor: 0.4 },
+    tags:   ['WEEDBED_INNER'],
+    reach:  { fromDockMin: 12, draftClass: 'SHALLOW' },
+  },
+});
+
+worldMap.registerPoiZone(HOME_POI_ID,    ['0,0']);
+worldMap.registerPoiZone(SPOT_POI_ID,    ['10,0']);
+worldMap.registerPoiZone(SHALLOW_POI_ID, ['20,0']);
+
+// POIs — frameRadius=30 gives plenty of room for the driftStep test
+poiGraph.registerPoi({
+  id:          HOME_POI_ID,
+  label:       'Home Dock',
+  centerCoord: { x: 0, y: 0 },
+  frameRadius: 30,
+  draftClass:  'DEEP',
+});
+poiGraph.registerPoi({
+  id:          SPOT_POI_ID,
+  label:       'Fishing Spot',
+  centerCoord: { x: 10, y: 0 },
+  frameRadius: 30,
+  draftClass:  'DEEP',
+});
+poiGraph.registerPoi({
+  id:          SHALLOW_POI_ID,
+  label:       'Shallow Pool',
+  centerCoord: { x: 20, y: 0 },
+  frameRadius: 10,
+  draftClass:  'SHALLOW',
+});
+
+// Edges
+// HOME ↔ SPOT: 10 tiles, 5 min base time, minDepthM=0.5 — traversable by all boats
+poiGraph.registerEdge({
+  from:              HOME_POI_ID,
+  to:                SPOT_POI_ID,
+  distanceTiles:     10,
+  minDepthM:         0.5,
+  maxDepthM:         4.0,
+  minBoatDraftM:     0,
+  travelTimeMinBase: 5,
+});
+// HOME ↔ SHALLOW_POOL: exists so requestTravel can attempt the route (D-007 fires before edge check)
+poiGraph.registerEdge({
+  from:              HOME_POI_ID,
+  to:                SHALLOW_POI_ID,
+  distanceTiles:     20,
+  minDepthM:         0.5,
+  maxDepthM:         1.0,
+  minBoatDraftM:     0,
+  travelTimeMinBase: 10,
+});
+
+// Motor initialised with 100 L / 0.5 L per tile — plenty for the travel tests
+motor.initialise({ fuelCapacityL: 100, fuelPerTile: 0.5 });
+
+// ── 6a. placeAt() sets position in stateStore ────────────────────────────────
+navigation.placeAt(HOME_POI_ID);
+
+assertEqual(navigation.currentPoiId(), HOME_POI_ID,
+  '6a. placeAt() sets currentPoiId to the target POI');
+const initOffset = navigation.currentOffset();
+assertEqual(initOffset.dx, 0,
+  '6a. placeAt() initialises microOffset.dx to 0');
+assertEqual(initOffset.dy, 0,
+  '6a. placeAt() initialises microOffset.dy to 0');
+assert(!navigation.isTravelling(),
+  '6a. isTravelling() is false after placeAt');
+
+// ── 6b. driftStep() moves the boat according to the H-001 wind pipeline ─────
+// clock.nowMs() = 0 after resetAll; wind.sample(0) gives us the push vector.
+// No POI current (no flow field), no station keeping → pure wind drift.
+// navigation.js applies: velDx = -w.dx * w.intensityMs * WIND_DRIFT_SCALE * windPenalty
+// Fallback windPenalty = 0.20 (hub.activeBoat is null → fallback stat block used)
+const windAtZero = wind.sample(clock.nowMs()); // clock at 0
+const WIND_DRIFT_SCALE_K   = 0.25;             // must match navigation.js constant
+const FALLBACK_WIND_PENALTY = 0.20;            // must match navigation.js fallback
+
+const velDx = -windAtZero.dx * windAtZero.intensityMs * WIND_DRIFT_SCALE_K * FALLBACK_WIND_PENALTY;
+const velDy = -windAtZero.dy * windAtZero.intensityMs * WIND_DRIFT_SCALE_K * FALLBACK_WIND_PENALTY;
+const DT = 60; // in-game seconds — large enough to produce measurable displacement
+const expectedDx = velDx * DT;
+const expectedDy = velDy * DT;
+
+navigation.driftStep(DT);
+const afterDrift = navigation.currentOffset();
+
+assert(
+  Math.abs(afterDrift.dx - expectedDx) < 0.0002,
+  `6b. driftStep offset.dx matches H-001 wind-only pipeline ` +
+  `(expected≈${expectedDx.toFixed(5)}, got=${afterDrift.dx.toFixed(5)})`,
+);
+assert(
+  Math.abs(afterDrift.dy - expectedDy) < 0.0002,
+  `6b. driftStep offset.dy matches H-001 wind-only pipeline ` +
+  `(expected≈${expectedDy.toFixed(5)}, got=${afterDrift.dy.toFixed(5)})`,
+);
+// Conditional: if wind is non-trivial, offset must have actually moved
+assert(
+  windAtZero.intensityMs < 0.001 || Math.hypot(afterDrift.dx, afterDrift.dy) > 0.0001,
+  `6b. microOffset changed from zero after driftStep (intensityMs=${windAtZero.intensityMs})`,
+);
+console.log(`      drift after 60s: dx=${afterDrift.dx.toFixed(5)}, dy=${afterDrift.dy.toFixed(5)}`);
+
+// ── 6c. station('OARS') sets anchored=true in stateStore ────────────────────
+navigation.station('OARS');
+assertEqual(stateStore.getState().session.player.anchored, true,
+  '6c. station(OARS) sets state.session.player.anchored to true');
+
+// ── 6d. station() rejects invalid mode ──────────────────────────────────────
+assertThrows(
+  () => navigation.station('ANCHOR'),
+  'must be OARS',
+  '6d. station() throws TypeError on invalid mode',
+);
+
+// ── 6e. D-040: nudge() beyond frameRadius triggers 300 000 ms clock penalty ─
+// Reset boat to center; disable station keeping so offset math is clean
+navigation.placeAt(HOME_POI_ID);
+navigation.station('NONE');
+const poi        = poiGraph.getPoi(HOME_POI_ID); // frameRadius = 30
+const timeBefore = clock.nowMs();
+// Nudge 40 tiles east — well beyond frameRadius=30
+navigation.nudge(1, 0, poi.frameRadius + 10);    // rawOffset = {dx:40, dy:0}
+const timeAfter  = clock.nowMs();
+
+assertEqual(
+  timeAfter - timeBefore,
+  300_000,
+  '6e. D-040: clock advances by exactly 300 000 ms after frame-boundary violation',
+);
+
+// ── 6f. After D-040 penalty, offset is snapped back inside frameRadius ───────
+const penaltyOffset = navigation.currentOffset();
+const penaltyMag    = Math.hypot(penaltyOffset.dx, penaltyOffset.dy);
+
+assert(
+  penaltyMag < poi.frameRadius,
+  `6f. D-040: snapped offset is within frameRadius  (mag=${penaltyMag.toFixed(4)}, r=${poi.frameRadius})`,
+);
+assert(
+  penaltyMag > 0,
+  `6f. D-040: snapped offset is non-zero (snapped to 50% of frameRadius, not origin)  (mag=${penaltyMag.toFixed(4)})`,
+);
+// rawOffset was {40, 0} → snapped scale = (30 * 0.5) / 40 = 15/40 → snapped.dx ≈ 15
+assert(
+  Math.abs(penaltyOffset.dx - 15) < 0.001,
+  `6f. D-040: snapped dx is 15 (= frameRadius * 0.5 = 30 * 0.5)  (got: ${penaltyOffset.dx.toFixed(4)})`,
+);
+console.log(`      penalty offset: dx=${penaltyOffset.dx.toFixed(4)}, dy=${penaltyOffset.dy.toFixed(4)}`);
+
+// ── 6g. requestTravel() succeeds for a valid well-fuelled route ──────────────
+// Place boat back at HOME (clean offset); clock is at 300 000 after D-040 penalty
+navigation.placeAt(HOME_POI_ID);
+const travelTimeBefore = clock.nowMs();              // 300 000 ms (from D-040 above)
+const edge = poiGraph.edge(HOME_POI_ID, SPOT_POI_ID);
+// speedFactor = fallback(4.0) / reference(4.0) = 1.0 → travelTimeMs = 5 * 60 000 = 300 000
+const expectedTravelMs = Math.round(edge.travelTimeMinBase * 60_000 / 1.0);
+
+const travelResult = navigation.requestTravel(SPOT_POI_ID);
+
+assert(travelResult.success,
+  '6g. requestTravel() returns { success: true } for a valid route');
+assertEqual(travelResult.reason, null,
+  '6g. requestTravel() reason is null on success');
+assertEqual(navigation.currentPoiId(), SPOT_POI_ID,
+  '6g. currentPoiId() updated to destination POI after travel');
+const arrivalOffset = navigation.currentOffset();
+assertEqual(arrivalOffset.dx, 0,
+  '6g. microOffset.dx is 0 on arrival (boat docked at POI centre)');
+assertEqual(arrivalOffset.dy, 0,
+  '6g. microOffset.dy is 0 on arrival (boat docked at POI centre)');
+assert(!navigation.isTravelling(),
+  '6g. isTravelling() is false after arrival');
+
+// ── 6h. requestTravel() advances the tournament clock by travelTimeMs ────────
+const travelTimeElapsed = clock.nowMs() - travelTimeBefore;
+assertEqual(
+  travelTimeElapsed,
+  expectedTravelMs,
+  `6h. clock advanced by exactly travelTimeMs (${expectedTravelMs} ms) during requestTravel`,
+);
+console.log(`      travel: ${edge.distanceTiles} tiles in ${expectedTravelMs / 60_000} in-game min`);
+
+// ── 6i. requestTravel() consumes fuel from the outboard motor ────────────────
+// 10 tiles × 0.5 L/tile = 5 L consumed; 100 - 5 = 95 L remaining
+const fuelAfterTravel = motor.fuelRemaining();
+const fuelExpected    = 100 - edge.distanceTiles * 0.5;
+assert(
+  Math.abs(fuelAfterTravel - fuelExpected) < 0.001,
+  `6i. fuel reduced by distanceTiles × fuelPerTile (expected ${fuelExpected}L, got ${fuelAfterTravel}L)`,
+);
+
+// ── 6j. D-007 Shallow Water Override blocks Bass Boat at shallow tile ─────────
+// Set hub.activeBoat = BASS_BOAT (shallowDraftMin = 0.70)
+// The tile at SHALLOW_POOL center has minM = 0.35 → 0.35 < 0.70 → D-007 fires
+stateStore.dispatch({ type: 'HUB_ACTIVE_BOAT_SET', payload: { boatId: 'BASS_BOAT' } });
+navigation.placeAt(SHALLOW_POI_ID);   // bass boat is now at the shallow tile
+
+// Any outbound travel attempt from here should be D-007 blocked
+const shallowResult = navigation.requestTravel(HOME_POI_ID);
+
+assert(!shallowResult.success,
+  '6j. D-007: requestTravel() returns { success: false } when current tile is below shallowDraftMin');
+assertEqual(shallowResult.reason, 'SHALLOW_OVERRIDE',
+  '6j. D-007: reason is SHALLOW_OVERRIDE (bass boat 0.70m draft, tile minM=0.35m)');
 
 // ===========================================================================
 // SUMMARY
