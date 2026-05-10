@@ -1,0 +1,109 @@
+Semantic workspace search is not currently available
+Thinking: Let me first examine the existing codebase to understand the exact API contracts, then write the harness. Let me look at the existing files.
+Read engine.js, lines 1 to 80
+Read rng.js, lines 1 to 60
+Read stateStore.js, lines 1 to 60
+Read engine.js, lines 80 to 160
+Read profileStore.js, lines 1 to 80
+Read stateStore.js, lines 60 to 130
+Read profileStore.js, lines 80 to 80
+Read eventBus.js, lines 1 to 60
+Searched for files matching **/package.json, no matches
+Read afish
+Read profileStore.js, lines 80 to 82
+Thinking: There's no package.json yet. I need to create one with `"type": "module"` for ESM. Let me check the src directory structure more carefully.
+Read src
+Read profileStore.js, lines 85 to 200
+Read profileStore.js, lines 200 to 290
+Read profileStore.js, lines 290 to 317
+Thinking: Now I have a clear picture of the API. Let me also check what's in stateStore to understand what `getState()` and `_reset()` look like, as well as the modeRouter for the assertNoLeaks() function.
+Let me also check for a package.json - there isn't one. The terminal already shows `accessible-fishing@0.1.0` which implies there IS a package.json. Let me check more carefully.
+Running Get-ChildItem -Path C:\nbs\afish -Name -Force | Where-Object { $_ -notmatch &#39;.... Get-ChildItem -Path C:\nbs\afish -Name -Force | Where-Object { $_ -notmatch '^\.git' }
+Thinking: There's no package.json! The terminal output showed `accessible-fishing@0.1.0` and `node tests/harness.js` — this must have been a prior run from a context where a package.json was already there, or the terminal context is wrong. But actually, looking at the provided context again:
+```
+Terminal: powershell
+Last Command: > accessible-fishing@0.1.0 harness> node tests/harness.js=== RNG ===...
+```
+This was showing a PREVIOUS run of harness.js output. There IS a tests/harness.js and a package.json already! The context "Last Command" shows the output of running `npm run harness` or similar. So there must be a tests/ directory already.
+Let me check the src directory and see if there's a tests folder there.
+Running Get-ChildItem -Path C:\nbs\afish -Recurse -Name -Force | Where-Object { $_ -n.... Get-ChildItem -Path C:\nbs\afish -Recurse -Name -Force | Where-Object { $_ -notmatch '\.git' } | Sort-Object
+Thinking: No package.json and no tests/ directory. The terminal context showing `accessible-fishing@0.1.0 harness> node tests/harness.js` is probably from the FUTURE test run that I need to set up. Or it's showing a hypothetical output. 
+Wait, the context says "Last Command" which implies this was already run. But there's no package.json. This is confusing. Let me re-read the context carefully.
+"Terminal: powershell
+Last Command: > accessible-fishing@0.1.0 harness> node tests/harness.js=== RNG ===..."
+This is showing the OUTPUT of a previous run from a PREVIOUS conversation. 
+The session context is showing a "Last Command" output that must be from an earlier iteration where the harness was already running. Since those files don't exist now, they were likely cleared between sessions. The conversation summary mentions "Phase 2 just initiated" but there are no Phase 2 files on disk yet, so I just created them.
+Looking at the git push and terminal output more carefully, that's output from a previous run of the harness that's no longer reflected in the current file system. The user is asking me to write the proper Phase 0+1+2 harness from scratch, so I need to create a `package.json` with ES module support and set up the `tests/harness.js` file.
+Now I need to examine how the stateStore's `_reset()` function works so I can properly reset state between tests.
+Read stateStore.js, lines 130 to 300
+Read engine.js, lines 140 to 200
+Searched for regex _reset|_resetManifests|export (**/src/core/stateStore.js), 5 results. Files: c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js
+Searched for regex _resetManifests|export|_reset (**/src/core/modeRouter.js), 3 results. Files: c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js
+Read modeRouter.js, lines 270 to 287
+Read stateStore.js, lines 460 to 477
+Thinking: Now I have a clear picture. Let me also check the clock module's reset export and the engine's exports:
+Searched for regex ^export|^function _reset|^function reset (**/src/core/clock.js), 2 results. Files: c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js
+Searched for regex ^export (**/src/engine.js), 1 result. Files: c:\nbs\afish\src\engine.js
+Thinking: Now I have enough context to write the harness. Let me also understand whether there's a `poiGraph._clear()` or `worldMap._clear()` etc. Looking at what I wrote, I have:
+- `worldMap._clear()`
+- `poiGraph._clear()`
+- `structureIndex._clear()`
+The engine also exports `_resetBootedFlag`. The clock exports `reset`. The stateStore exports `_reset`. The modeRouter exports `_resetManifests`.
+Let me also check the rng exports to know what `rngStream` returns:
+Searched for regex ^export|function seed|function rngStream (**/src/core/rng.js), 3 results. Files: c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js
+Now I have everything I need. The terminal output in the context shows the harness has already been run before — meaning there must be a
+package.json (c:\nbs\afish\src\profile\profileStore.js:264)
+that was generated in a previous session that's not yet committed. Let me create both files:
+Created package.json
+Created harness.js
+Errored. Running node tests/harness.js 2&gt;&amp;1. node tests/harness.js 2>&1
+Errored. Running node tests/harness.js. node tests/harness.js
+Searched for text DEFAULT_PROFILE_PATH (**/src/profile/profileStore.js), 7 results. Files: c:\nbs\afish\src\profile\profileStore.js, c:\nbs\afish\src\profile\profileStore.js, c:\nbs\afish\src\profile\profileStore.js, c:\nbs\afish\src\profile\profileStore.js, c:\nbs\afish\src\profile\profileStore.js, c:\nbs\afish\src\profile\profileStore.js, c:\nbs\afish\src\profile\profileStore.js
+DEFAULT_PROFILE_PATH (c:\nbs\afish\src\profile\profileStore.js:43)
+is exported twice — once as export const on line 43 and again in the export {} at the end.
+Replacing 1 lines with 1 lines in profileStore.js
+```
+```
+```
+```
+Errored. Running node tests/harness.js. node tests/harness.js
+Thinking: There are 4 failures, all related to two root causes:
+1. `profileStore._seedInMemory()` not working — the profile store ignores the in-memory seeded data and creates a new profile from disk. The issue is that the in-memory backend only kicks in when `node:fs/promises` fails to import, but in Node.js it always succeeds. So the `_seedInMemory` path only works when `_fs === null`. But on Node.js, `_fs` is not null, so it reads from the real filesystem.
+The fix: I need to make `_seedInMemory` work even in Node.js — maybe by using the in-memory map as an override path regardless of whether `_fs` is available.
+2. The real problem is that `_readRaw` checks `_fs` first and never looks at the `_inMemory` Map when the filesystem is available. I can fix this by checking if a key exists in `_inMemory` before falling back to disk reads, or I could change the test harness to write actual temp files instead. Closing the function and confirming the approach: I need to reorder the checks in `_readRaw` so the in-memory store takes priority over the filesystem, letting test seeds override real files. I also need to fix the test harness assertion — it's checking for "BOTTOM_TYPES" but the actual error message lists the valid enum values, so I'll align the assertion with what the code actually produces.
+Two root causes. The
+_seedInMemory (c:\nbs\afish\src\profile\profileStore.js:304)
+helper isn't consulted when Node.js
+fs (c:\nbs\afish\src\profile\profileStore.js:150)
+is available (it only activates in browser/WASM). And the error-message substring in one assertion doesn't match the actual message. Fix both:
+Replacing 45 lines with 57 lines in profileStore.js, harness.js
+```
+```
+```
+```
+```
+```
+Running node tests/harness.js. node tests/harness.js
+89/89 passed, 0 failed. Exit code 0.
+Three files created/modified:
+**
+tests/harness.js (/c:/nbs/afish/tests/harness.js)
+** — 4 sections, 89 assertions. Covers boot & profile seeding (§1), the full D-037 tile schema (§2 — validation errors, freeze enforcement, mutateTileState, POI zones, structureIndex.rebuild(), scoring order, offset math, copy isolation), graph topology (§3 — edge bidirectionality, canTraverseEdge two-sided D-022 filtering, poisByDraft fleet filtering), and the H-005 leak test (§4).
+**
+package.json (/c:/nbs/afish/package.json)
+** — created with
+"type": "module" (c:\nbs\afish\src\core\stateStore.js:411)
+and npm run harness script.
+**
+src/profile/profileStore.js (/c:/nbs/afish/src/profile/profileStore.js)
+** — fixed a duplicate
+DEFAULT_PROFILE_PATH (c:\nbs\afish\src\profile\profileStore.js:43)
+export, and made
+_readRaw (c:\nbs\afish\src\profile\profileStore.js:149)
+/
+_writeRaw (c:\nbs\afish\src\profile\profileStore.js:179)
+check the in-memory map first so
+_seedInMemory() (c:\nbs\afish\src\profile\profileStore.js:316)
+works as a priority override even when Node.js
+fs (c:\nbs\afish\src\profile\profileStore.js:156)
+is available.
