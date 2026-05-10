@@ -1,4 +1,4 @@
-brief_version: 1.10
+brief_version: 1.13
 
 ## §0 AGENT DIRECTIVES
 - Read this file end-to-end on session boot.
@@ -13,7 +13,7 @@ brief_version: 1.10
 - Focus: Strategic gameplay, equipment management, and dynamic environments over visual reflexes.
 - Architecture: Strict modular split. Single-purpose JavaScript files.
 - Active cycle: Conceptual Design.
-- App version: v0.1.0. Brief version: 1.10.
+- App version: v0.1.0. Brief version: 1.13.
 - State: Conceptual design phase. STRICT NO CODE LOCK active.
 
 ## §2 PROJECT
@@ -141,6 +141,12 @@ brief_version: 1.10
     - **Spook → high-shelf cut** (PRO+ finder only): high-frequency content attenuated as spook rises; level 5 cuts everything above 800Hz by 12dB (“far away / muffled”).
     - **TTS coexistence**: finder ping is procedural and arrives in ~30ms; TTS short-form summary (categorical fields only: cover type, species band) is queued NORMAL priority separately via `audio/ttsQueue.js`. Ping never blocks TTS; TTS never delays ping. Preserves D-021 audio boundary.
     - **Synth voice precaching**: all voices (tension oscillator, ping voice, noise overlay) are pre-built and cached at audio boot per H-009 to eliminate cold-synth first-trigger latency.
+
+  - D-066 Module Consolidation & Interface Boundaries (LOCKED): §9 CORE FILES is consolidated from ~48 files to **23 files** for code-ready context efficiency. Consolidation rules: (a) merge sequential pipeline logic with one input → one output → one consumer; (b) merge multiple shapes of the same data-driven concept (shops, AI archetypes, menu views) into single data-driven files; (c) keep separate any module consumed by ≥2 unrelated consumers or called out in H-001..H-016 as a boundary requirement; (d) single-responsibility = single concept, NOT single function — multiple functions of the same concept may live in one file. **Merges applied**: castPower+castTiming+castValidator+castResolver → `castPipeline.js`; hookset+tensionModel+fight → `fightLoop.js`; baitShop+tackleShop+boatShop+workshop → `hubShops.js` (data-driven); hubMenu+leaderboardsView+soundMenu → `hubMenu.js`; grid+lakeGenerator+tileTraits → `worldMap.js`; boatController+poiTravel+microDrift+stationKeeping+shallowOverride → `navigation.js`; rods+lures+liveBait+crafting+durability → `equipment.js`; species+population+strikeModel+biteTimer+fishStateMachine+pressureModel → `fishBehavior.js` (Spook/Pressure orthogonality per H-013 preserved internally as separate exports/state, NOT one counter); brainBase+primeDirective+tournamentScheduler+personalities/* → `aiBots.js` (six archetypes are data rows, Bill the Legend is a data override); circuit+scoring+payout+weighIn → `tournament.js`; audioManager+audioRoutes → `audioBus.js`; profileStore+profileSerializer → `profileStore.js`. **Kept separate** (boundary-mandated): castSpookModel (H-003), targetSelector (D-041/H-014), fishFinder (H-014), structureIndex (H-002), poiGraph (multi-consumer), wind/motor (multi-consumer), boats (D-022 multi-consumer), economy (multi-consumer per D-019), leaderboard (H-016 atomic ordering), all six `core/*` files (§5 invariants). Each folder defines a **Public API Contract** declared in §9 — violations are blockable on review.
+
+  - D-067 Boat Loadout Constraints (LOCKED): Boats define `maxRods` and `maxLures` in their stat block (e.g., Rowboat: 2 rods / 5 lures; Bass Boat: 6 rods / 20 lures). The player must assemble an `activeTackle` loadout from the broader Hub inventory before entering a tournament (pre-tournament Loadout Rigging step in `hubMenu.js`). During `TOURNAMENT_ACTIVE`, `castPipeline` and `equipment.js` ONLY have access to items in the `activeTackle` state partition — the broader inventory is not addressable. This enforces pre-tournament strategic preparation and gives boat upgrades a meaningful capacity dimension orthogonal to speed/finder-tier.
+  - D-068 Workbench Deferred (LOCKED): The `crafting.js` logic and Workbench hub menu interaction are formally deferred to **v2.0**. The Hub Menu still lists "Workbench" as a navigable entry, but selecting it returns a "Coming Soon" / "Under Construction" audio ping and returns focus to the menu. No crafting state, no recipe schema, no workbench inventory partition is implemented in v1.x. Per D-066, the `equipment.js` consolidation no longer includes a crafting export — the crafting concept is removed from v1.x scope entirely (not merely stubbed inside equipment).
+  - D-069 Loadout Rigging Mode Anchor (LOCKED — Red Team v1.13): The pre-tournament Loadout Rigging step (D-067) is anchored to the `TOURNAMENT_BRIEFING` mode (D-017), NOT to HUB mode. Owner: `tournament.js` mounts a Loadout Rigging surface on enter-TOURNAMENT_BRIEFING; `hub/*` is fully unmounted by then per D-025. The rigging surface validates `activeTackle` against `boats.activeBoatStats().maxRods` / `maxLures` and BLOCKS `modeRouter.transitionTo(TOURNAMENT_ACTIVE)` until validation passes (empty `activeTackle` is permitted but warns; over-cap is rejected outright). On enter-TOURNAMENT_ACTIVE, `state.tournament.activeTackle` is frozen as a set (per H-017). Resolves the FSM gap where Loadout Rigging had no declared mode owner.
 ## §7 PREFERENCES
 - Full, unabbreviated files for code generation.
 - Copy buttons for all generated changelogs and prompts.
@@ -163,16 +169,71 @@ brief_version: 1.10
 - H-014 Finder ↔ Cast State Coupling: `equipment/fishFinder.js` and `casting/*` must communicate ONLY through `state.tournament.scanLocked` flag plus `TARGET_LOCKED` and `FISH_FINDER_RESULTS` events. No direct imports between finder and cast modules. Violations re-introduce the spaghetti-FSM failure mode the modular split exists to prevent.
 - H-015 AI Sub-Stream Determinism: Every bot's RNG calls MUST route through dedicated sub-streams: `rngStream('aiBrain:' + botId)` for movement / lure rotation / POI selection, and `rngStream('aiCatch:' + botId)` for P_catch rolls and weight sampling. Mixing streams across bots or sharing the world RNG breaks replay determinism (§5d). Verified by the replay test in Phase 9.
 - H-016 Leaderboard-Before-Emit Ordering: `SIMULATED_CATCH` events MUST carry pre-computed `leaderboardImpact` (D-061). Emitting before the leaderboard commits would let TTS and audio consumers read stale rank state and announce wrong standings. The scheduler computes the impact, commits the leaderboard write, then emits the event in a single atomic block.
+- H-017 Active Tackle Mutation Boundary (Red Team v1.13): D-067's `activeTackle` partition has TWO mutation classes that must NOT be conflated: (a) **set-membership** (adding/removing rod or lure entries) is FROZEN on enter-TOURNAMENT_ACTIVE and may only be mutated in HUB or TOURNAMENT_BRIEFING modes; (b) **per-item state** (rod durability per D-044, lure durability, live-bait vigor per D-051) MUST continue to mutate during TOURNAMENT_ACTIVE — these are normal gameplay state writes via `equipment.damageItem` / `equipment.vigor` and are subject to D-019's `state.tournament` partition. A broken rod (durability=0) or dead bait (vigor=0) remains in its slot, unusable, until the tournament ends and the player returns to HUB — it is NOT auto-replaced from broader inventory. Coding agents must enforce both directions: reject set-membership writes during TOURNAMENT_ACTIVE; do NOT reject state writes.
+- H-018 Same-Tick Bot Catch Ordering (Red Team v1.13): When two or more bots' D-060 cooldowns fire on the same `atMs` (statistically certain across a long tournament), `aiBots.js` MUST process them strictly sequentially: each bot's `computeImpact → leaderboard.commit → bus.emit(SIMULATED_CATCH)` completes IN FULL before the next bot's pipeline begins. Batched same-tick processing (compute all impacts first, commit all, emit all) is FORBIDDEN — it produces stale `leaderboardImpact` payloads on bots 2..N. H-016 covers ordering between leaderboard-and-bus for ONE catch; H-018 covers ordering ACROSS simultaneous catches. Verified by a same-tick replay test in Phase 9.
 
-## §9 CORE FILES (Proposed Modular Split)
-- `src/core/` (eventBus.js, clock.js, rng.js, stateStore.js, inputAdapter.js, modeRouter.js)
-- `src/audio/` (audioManager.js, audioRoutes.js, ttsQueue.js, sfxBank.js, synthGraph.js, musicBed.js)
-- `src/profile/` (profileStore.js, profileSerializer.js)
-- `src/hub/` (hubMenu.js, baitShop.js, tackleShop.js, boatShop.js, workshop.js, leaderboardsView.js, soundMenu.js, economy.js)
-- `src/world/` (grid.js, lakeGenerator.js, structureIndex.js, poiGraph.js, tileTraits.js)
-- `src/navigation/` (boatController.js, poiTravel.js, microDrift.js, stationKeeping.js, wind.js, motor.js, shallowOverride.js)
-- `src/casting/` (castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, hookset.js, tensionModel.js, fight.js, targetSelector.js)
-- `src/equipment/` (rods.js, lures.js, crafting.js, durability.js, liveBait.js, fishFinder.js, boats.js)
+## §9 CORE FILES (Consolidated v1.11 — 23 files)
+
+Each folder declares a **Public API Contract** that is the ONLY permitted entry surface. All cross-folder communication flows through the event bus or these declared entries. No deep imports across folders.
+
+### `src/core/` (6 files — §5 invariants, no consolidation permitted)
+- `eventBus.js` — **Contract**: `emit / on / off`. Sole cross-module communication surface. No subsystem may import another subsystem directly to pass messages.
+- `clock.js` — **Contract**: `start / pause / tick / every / schedule / nowMs`. Single time authority (§5e). Only `modeRouter` may call `pause / reset / start` for mode reasons (D-018).
+- `rng.js` — **Contract**: `rngStream(name)`. Single RNG authority (§5d). No `Math.random()` anywhere. AI bots MUST use `rngStream('aiBrain:'+id)` / `rngStream('aiCatch:'+id)` (H-015).
+- `stateStore.js` — **Contract**: `getState / dispatch / subscribe`. Only mutation path. Partitioned per D-019 (profile / hub / tournament / session). Direct property writes forbidden.
+- `inputAdapter.js` — **Contract**: emits `INPUT_*` events; queries `isHeld / heldDuration`; controls `lock / releaseAll`. All input flows through here (D-010); no raw keyboard reads elsewhere.
+- `modeRouter.js` — **Contract**: `transitionTo(mode)` + mount-manifest registration. Sole owner of `state.mode`. Sole permitted caller of clock mode-pause/resume (D-018). Calls `inputAdapter.releaseAll()` on every transition (H-010).
+
+### `src/audio/` (5 files — D-021 boundary; subscribes to bus only, never mutates state)
+- `audioBus.js` — **Contract**: subscribes to event bus; fans events to ttsQueue / synthGraph / sfxBank / musicBed. **Never imported by any folder outside `audio/`.**
+- `ttsQueue.js` — **Contract**: priority queue (URGENT/HIGH/NORMAL/LOW per D-062) with coalescing (H-007). Single text-to-speech surface.
+- `synthGraph.js` — **Contract**: `playTension(t, rampToMs)` and `playFinderPing({depthM, pressure, presenceHint, spook})`. Owns all D-065 procedural math. Voices pre-cached at boot (H-009).
+- `sfxBank.js` — **Contract**: `play(tokenId)` for sample-backed cues that can't reasonably be synthesized (music beds excluded).
+- `musicBed.js` — **Contract**: `crossfadeTo(bedId)`. Long-form ambient layer.
+
+### `src/profile/` (1 file)
+- `profileStore.js` — **Contract**: `load() / save()`. Adapter behind a single interface (D-024). Concrete backend (Node fs / browser localStorage) is internal.
+
+### `src/hub/` (3 files — HUB-mode only; unmounted in tournament per D-025)
+- `hubMenu.js` — **Contract**: sole render/focus surface in HUB mode. Routes to shop / leaderboard / sound submenus (which are data, not files).
+- `hubShops.js` — **Contract**: data-driven shop catalog (bait + tackle + boats + workshop). `listInventory(shopId) / purchase(itemId)`. No per-shop file.
+- `economy.js` — **Contract**: `wallet() / debit(n) / credit(n) / awardPrize(prizeSpec)`. Sole writer of `state.hub.money` (D-027). Multi-consumer (Hub + Tournament/payout path).
+
+### `src/world/` (3 files)
+- `worldMap.js` — **Contract**: `getTile(coord) / tilesByPoi(poiId) / allCoords()`. Engine MAY ONLY query world via this surface. Never read raw sparse-Map or grid coordinates directly. Owns D-037 tile schema enforcement.
+- `structureIndex.js` — **Contract**: `candidatesForPoi(poiId)`. Read-only precomputed lookup; rebuilt only on world regeneration. Consumers: `fishFinder`, `aiBots` (H-002).
+- `poiGraph.js` — **Contract**: `neighbors(poiId) / edge(a,b) / poisByDraft(draftClass)`. Pure graph topology — no fish/spook/pressure state.
+
+### `src/navigation/` (3 files)
+- `navigation.js` — **Contract**: `requestTravel(poiId) / driftStep(dt) / station(mode)`. Sole owner of boat position. Resolves all vectors (wind + drift + motor thrust) in the declared pipeline (H-001). Frame-boundary penalty per D-040 enforced internally. Shallow-water override per D-007 enforced internally.
+- `wind.js` — **Contract**: `sample(atMs)`. Pure read; deterministic from clock + seed. Sampled at Tap 1 by cast pipeline and held for flight (D-012).
+- `motor.js` — **Contract**: `consume(distance) / fuelRemaining() / batteryRemaining()`. Equipment-state writer; multi-consumer (navigation, economy, audio synth queue for engine sounds).
+
+### `src/casting/` (4 files)
+- `castPipeline.js` — **Contract**: consumes `TARGET_LOCKED` (D-041) + 5-tap `INPUT_*` chain (D-014); emits `CAST_BIRDS_NEST` / `CAST_LANDED`. Owns Scatter & Mitigation math. No state outside `state.tournament.cast`.
+- `castSpookModel.js` — **Contract**: `readSpook(coord, atMs) / applySplash(coord, kind, atMs)`. Compute-on-read service (D-038). Sole writer of `tile.state.spook`. KEPT SEPARATE per H-003 (consumed by both castPipeline AND fishBehavior).
+- `targetSelector.js` — **Contract**: consumes `FISH_FINDER_RESULTS`; emits `TARGET_LOCKED`. Menu-FSM. NO direct import of `fishFinder` (H-014).
+- `fightLoop.js` — **Contract**: owns FIGHT mode; subscribes to `INPUT_*` edges + queries `isHeld`; emits `FIGHT_TENSION` (coalesced), `FIGHT_PHASE_CHANGED`, `FIGHT_THRESHOLD_CROSSED`, `FIGHT_RESOLVED` (D-035). Cancels its `clock.every(60ms)` handle on resolve (H-005, H-011). Mutually exclusive with `castPipeline`. Hookset Trap & Trigger + tension math live here.
+
+### `src/equipment/` (3 files)
+- `equipment.js` — **Contract**: `getRod(id) / getLure(id) / getBait(id) / damageItem(id, kind) / vigor(baitId)`. Data-driven catalog + durability + live-bait vigor (D-051). Read-only schema (D-044); mutable state via `stateStore.dispatch` only.
+- `fishFinder.js` — **Contract**: `scan() / cancel()`; emits `FISH_FINDER_RESULTS`. Honors `state.tournament.scanLocked` (D-043). NEVER imports from `casting/*` (H-014). Tier ladder per D-042.
+- `boats.js` — **Contract**: `activeBoatStats() / canReach(poiId)`. Read-only stat block accessor (D-022). Multi-consumer (navigation, hubShops, equipment slot validation).
+
+### `src/fish/` (1 file)
+- `fishBehavior.js` — **Contract**: `evaluateStrike(castSpec) / scheduleBite(...) / advanceFight(input, dt) / readPressure(coord, atMs) / applyPressureEvent(coord, kind, atMs)`. Single fish-behavior surface (species data + population + strike + biteTimer + Running↔Tired FSM + pressure model). Spook and Pressure are MATHEMATICALLY ORTHOGONAL inside the file (H-013) — separate state, separate decay, separate exports; NEVER merged into a single counter.
+
+### `src/ai/` (1 file)
+- `aiBots.js` — **Contract**: `mountForTournament(tournamentSpec) / unmount()`. Manifests bot cooldowns via `clock.every` per D-060. Uses `rngStream('aiBrain:'+id)` / `rngStream('aiCatch:'+id)` exclusively (H-015). Emits `SIMULATED_CATCH` with pre-computed `leaderboardImpact` (H-016) and `SIMULATED_TOURNAMENT_SKUNK` on zero-fish end (D-061). Six archetypes (D-058) + Bill the Legend are internal data, not separate files. Win-condition objective switch (D-063) handled internally.
+
+### `src/tournament/` (2 files)
+- `tournament.js` — **Contract**: `enter(tournamentSpec) / weighInEarly() / resolve()`. Owns tournament lifecycle (circuit + scoring + payout + weigh-in). Sole writer of `state.tournament`. Only caller of `economy.awardPrize`. D-026 weigh-in fast-forward uses the same `clock.tick()` path as live play (H-008).
+- `leaderboard.js` — **Contract**: `computeImpact(catchSpec) / commit(catchSpec) / standings()`. Pre-computes `leaderboardImpact` for `SIMULATED_CATCH` BEFORE emit (D-061, H-016). KEPT SEPARATE to make the atomic ordering contract explicit and auditable.
+
+### `src/engine.js` (1 file)
+- `engine.js` — **Contract**: `boot()` only. Wires the mode router + event bus + clock + audio bus once at startup. Contains NO game logic. Engine boot test asserts zero stray subscriptions after a HUB↔TOURNAMENT round-trip (H-005).
+
+**Total: 23 files** across 12 folders. Down from ~48 in v1.10 without violating a single hazard boundary.
 - `src/fish/` (species.js, population.js, strikeModel.js, biteTimer.js, fishStateMachine.js, pressureModel.js)
 - `src/ai/` (brainBase.js, primeDirective.js, tournamentScheduler.js, personalities/billTheLegend.js)
 - `src/tournament/` (circuit.js, leaderboard.js, scoring.js, payout.js, weighIn.js)
@@ -205,24 +266,22 @@ brief_version: 1.10
 - Repositioning Penalty: Fixed 5 in-game minutes deducted from the tournament clock when drift pushes the boat outside `frameRadius` (D-040).
 
 ## §11 CURRENT STATUS
-- Active task: ALL THREE PHASES OF DATA MODELING COMPLETE. Phase 1 (Water Tile, v1.6), Phase 2 (Equipment/Entity Triangle, v1.7), Tournament & Career (v1.8), and Phase 3 (AI Bot Brains, v1.9) all locked. Next: awaiting explicit `INITIATE PHASE [X]` override to lift NO CODE LOCK and begin implementation.
-- Blockers: None. STRICT NO CODE LOCK still active.
+- **CONCEPTUAL DESIGN COMPLETE. Awaiting INITIATE PHASE 0 command.**
+- All three data-modeling phases locked (v1.6 tile, v1.7 equipment/entity triangle, v1.8 tournament/career, v1.9 AI bots, v1.10 procedural audio math, v1.11 module consolidation).
+- 23 core files defined with explicit Public API Contracts (§9). 69 locked decisions (D-001..D-069). 18 documented hazards (H-001..H-018).
+- STRICT NO CODE LOCK remains active until explicit `INITIATE PHASE [X]` override.
 
-## §12 ROADMAP
-- [ ] Phase 0: Foundations (eventBus, clock, rng, stateStore, inputAdapter, modeRouter)
-- [ ] Phase 0.5: Boot, Focus Trap, Profile (engine boot sequence, profile/, FOCUS_TRAP screen, profileSerializer adapter)
-- [ ] Phase 1: World Generation (grid, tileTraits per D-037, lakeGenerator, structureIndex, poiGraph)
-- [ ] Phase 2a: POI Fast-Travel (poiTravel, motor outboard cost model, boatController mode routing, equipment/boats.js)
-- [ ] Phase 2b: Micro-Drift (microDrift local frame, wind, momentum, stationKeeping, frame-boundary repositioning penalty per D-040)
-- [ ] Phase 3: Equipment Baseline (rods, lures, durability, liveBait, fishFinder with tier ladder per D-042, boats with finder-slot)
-- [ ] Phase 4a: Casting (castPower, castTiming, castValidator, castResolver, castSpookModel, targetSelector menu-FSM per D-041)
-- [ ] Phase 4b: Hookset & Fight (hookset.js with Trap/Trigger windows; tensionModel.js pure math; fight.js orchestrator with `clock.every(60ms)` loop and coalesced FIGHT_TENSION events)
-- [ ] Phase 4c: Adapter Edge Upgrade (inputAdapter DOWN/UP edges, isHeld, releaseAll, lockout forced-release per D-029/D-030)
-- [ ] Phase 5: Fish & Strikes (species, population, strikeModel, biteTimer, fishStateMachine — Running↔Tired FSM, pressureModel per D-039)
-- [ ] Phase 6: AI & Competition (brainBase, primeDirective, tournamentScheduler with D-059 headless equation + D-060 cooldown cadence, six archetype personalities per D-058/D-064, tournament/circuit with D-056 weekly calendar, leaderboard with D-061 SIMULATED_CATCH pre-computed impact, scoring, weekly arms-race tier advance per D-054, win-condition objective switch per D-063)
-- [ ] Phase 7: Hub & Economy (hub/*, economy, payout, weighIn, single-currency wallet, auto-save triggers per D-020)
-- [ ] Phase 8: Audio Layer (audio/* — audioManager, audioRoutes, ttsQueue, synthGraph implementing D-065 procedural-synth mappings (tension→Hz exponential 220→880Hz, finder ping depth→Hz, pressure→noise, presence→envelope, spook→high-shelf), sfxBank, musicBed; procedural-first per D-028; voices pre-cached at audio boot per H-009)
-- [ ] Phase 9: Engine Integration & Replay (engine.js wiring, deterministic replay test, mount/unmount leak test per H-005, weigh-in fast-forward determinism test per H-008)
+## §12 ROADMAP (Consolidated v1.11 — maps to 23-file structure in §9)
+- [ ] **Phase 0 — Foundations**: `core/*` (eventBus, clock, rng, stateStore, inputAdapter, modeRouter); harness regression tests for determinism (§5d/§5e), lockout, mode transitions, edge-event input model (D-029/D-030).
+- [ ] **Phase 1 — Profile & Boot**: `engine.js` boot, `profile/profileStore.js` (adapter per D-024), `FOCUS_TRAP` mode (D-023), mount-manifest registration scaffolding (H-005).
+- [ ] **Phase 2 — World**: `world/worldMap.js` (D-037 tile schema), `world/poiGraph.js`, `world/structureIndex.js` (H-002), per-POI flow + Lake-owned weather/season (D-057).
+- [ ] **Phase 3 — Navigation & Boats**: `navigation/navigation.js` (vector pipeline per H-001, frame-boundary penalty per D-040, shallow override per D-007), `navigation/wind.js`, `navigation/motor.js`, `equipment/boats.js` (D-022 stat block).
+- [ ] **Phase 4 — Equipment & Finder**: `equipment/equipment.js` (D-044 rod/lure/bait schemas, durability, live-bait vigor per D-051, **D-067 `activeTackle` loadout partition** sourced from boat `maxRods`/`maxLures`; crafting **deferred per D-068**), `equipment/fishFinder.js` (tier ladder D-042, scan lockout D-043), `equipment/boats.js` (D-022 stat block + D-067 `maxRods`/`maxLures` capacity fields).
+- [ ] **Phase 5 — Casting Pipeline**: `casting/targetSelector.js` (D-041 menu-FSM), `casting/castPipeline.js` (5-tap chain D-014, scatter+mitigation, boundary spool wall D-016, mismatched-lure scatter penalty D-052, Bird's Nest D-015), `casting/castSpookModel.js` (D-038 compute-on-read, H-003).
+- [ ] **Phase 6 — Fish & Fight**: `fish/fishBehavior.js` (D-032 dynamic nibble, D-033 hookset Trap & Trigger with 300ms floor D-050, Running↔Tired FSM, D-039 pressure model orthogonal to spook per H-013, lure memory time-decay D-049), `casting/fightLoop.js` (D-034 60ms tick, D-035 four-channel coalesced events, D-036 failure modes, D-031 phase-dependent idle decay).
+- [ ] **Phase 7 — Tournament, AI & Economy**: `tournament/tournament.js` (lifecycle, weigh-in fast-forward D-026, payout per D-027), `tournament/leaderboard.js` (H-016 pre-computed impact), `ai/aiBots.js` (D-058 six archetypes + D-064 count scaling, D-059 headless equation, D-060 cooldown cadence, D-063 win-condition switch, D-054 weekly arms-race tier, H-015 sub-streams, D-061 SIMULATED_CATCH + SIMULATED_TOURNAMENT_SKUNK), `hub/hubMenu.js` (**includes pre-tournament Loadout Rigging screen per D-067; Workbench entry returns deferred-stub ping per D-068**), `hub/hubShops.js`, `hub/economy.js` (auto-save per D-020, calendar D-056, repeatable tournaments D-055).
+- [ ] **Phase 8 — Audio Layer**: `audio/audioBus.js` (D-021 boundary), `audio/synthGraph.js` (D-065 tension→Hz exponential 220→880Hz, finder ping math, voice precache per H-009), `audio/ttsQueue.js` (D-062 priority ladder, H-007 coalescing), `audio/sfxBank.js`, `audio/musicBed.js`.
+- [ ] **Phase 9 — Integration & Replay**: full `engine.js` wiring; deterministic replay test (H-004); mount/unmount leak test (H-005); weigh-in fast-forward determinism test (H-008/H-012); fight-tick cadence smoke test (H-011).
 
 ## §13 OPEN QUESTIONS
 - (All initial OQs resolved in brief_version 1.1 via D-008, D-009, D-010.)
@@ -239,3 +298,6 @@ brief_version: 1.10
 
 	- S-009 (v1.8): Tournament & Career model locked. Arms Race AI progression (D-054), infinite repeatable tournaments (D-055), endless calendar with 1-per-week cadence (D-056), and Lake-owned dynamic weather (D-057) are now core. Special events deferred. NO CODE generated; STRICT NO CODE LOCK respected.  - S-010 (v1.9): Phase 3 of 3 data modeling COMPLETE. All AI Bot Brain math and schemas locked. Six personality archetypes confirmed (D-058): GRINDER, TROPHY_HUNTER, OPPORTUNIST, GAMBLER, METHODICAL, RUN_AND_GUN with hand-curated `lureRotation` per bot. Locked headless success equation (D-059) — pure math, no desperation mode, Trophy Hunter trophy rate capped at 12%. Locked bot cooldown cadence (D-060) with 0.70× under-tier penalty. Locked SIMULATED_CATCH event schema (D-061) — `lureId` intentionally omitted to prevent AI tackle reverse-engineering; SIMULATED_TOURNAMENT_SKUNK event approved for zero-fish bots. Locked TTS priority ladder (D-062). Locked win-condition objective switch with mathematically-scaled mismatch penalty (D-063). Locked bot count scaling 5→8 by tier (D-064). Added H-015 (AI sub-stream determinism) and H-016 (leaderboard-before-emit atomic ordering). Updated §11 to reflect ALL THREE PHASES OF DATA MODELING COMPLETE. Updated §12 Phase 6 to reference all new decisions. Engine is fully spec'd and ready for `INITIATE PHASE [X]` override to lift NO CODE LOCK. NO CODE generated; STRICT NO CODE LOCK respected.
   - S-011 (v1.10): Procedural audio math locked (D-065). Tension→Hz: exponential 220Hz (A3) → 880Hz (A5), 2-octave span, continuous ramp (no scale snapping), anti-fatigue duck at t≥0.85, sine→sawtooth timbre blend, slack ambient bed. Finder ping math: single `playFinderPing` entry point; depth→Hz inverse (440 * 2^(-depthM/6)); pressure→noise gain overlay; presence→multi-ping envelope (NONE/TRACE/SCATTERED/SCHOOLED) replacing TTS for that field; spook→high-shelf cut for muffled “far away” perception. TTS short-form runs in parallel via D-021 audio boundary. §12 Phase 8 updated to reference D-065 math. NO CODE generated; STRICT NO CODE LOCK respected.
+  - S-012 (v1.11): **CONCEPTUAL DESIGN COMPLETE.** The Great Pruning executed. §9 CORE FILES consolidated from ~48 files to **23 files** across 12 folders with explicit Public API Contracts per folder. Locked merges: castPower+castTiming+castValidator+castResolver → `castPipeline.js`; hookset+tensionModel+fight → `fightLoop.js`; baitShop+tackleShop+boatShop+workshop → `hubShops.js`; grid+lakeGenerator+tileTraits → `worldMap.js`; boatController+poiTravel+microDrift+stationKeeping+shallowOverride → `navigation.js`; rods+lures+liveBait+crafting+durability → `equipment.js`; species+population+strikeModel+biteTimer+fishStateMachine+pressureModel → `fishBehavior.js` (Spook/Pressure orthogonality preserved internally per H-013); brainBase+primeDirective+tournamentScheduler+personalities → `aiBots.js`; circuit+scoring+payout+weighIn → `tournament.js`; audioManager+audioRoutes → `audioBus.js`; profileStore+profileSerializer → `profileStore.js`. Kept separate where hazards demand (castSpookModel H-003, targetSelector/fishFinder H-014, structureIndex H-002, leaderboard H-016, all `core/*` per §5 invariants). Added D-066 Module Consolidation & Interface Boundaries. §12 ROADMAP compressed to 10 sequential phases (0–9) matching the new file map. §11 declares CONCEPTUAL DESIGN COMPLETE; awaiting `INITIATE PHASE 0` command. NO CODE generated; STRICT NO CODE LOCK respected.
+  - S-013 (v1.12): Loadout & Crafting amendments. Locked **D-067 Boat Loadout Constraints** — boats now declare `maxRods`/`maxLures` (Rowboat 2/5, Bass Boat 6/20); player must rig an `activeTackle` partition pre-tournament; `castPipeline` and `equipment.js` see only `activeTackle` during `TOURNAMENT_ACTIVE`; broader Hub inventory is unaddressable in-tournament. Locked **D-068 Workbench Deferred to v2.0** — Hub Menu lists Workbench but selecting it returns a "Coming Soon" audio ping; no crafting state, recipes, or inventory partition in v1.x; `equipment.js` no longer carries a crafting export (D-066 merge revised). §12 Phase 4 updated for loadout limits + crafting deferral; Phase 7 updated for pre-tournament Loadout Rigging screen + Workbench stub. Decision count now 68. NO CODE generated; STRICT NO CODE LOCK respected.
+  - S-014 (v1.13): **Red Team Audit pass.** Three structural vulnerabilities found and patched. (1) D-067 conflated set-membership mutation with per-item state mutation — added **H-017 Active Tackle Mutation Boundary** declaring set-membership FROZEN during TOURNAMENT_ACTIVE while durability/vigor writes remain enabled; broken/dead items stay in slot until HUB. (2) H-016 covered single-catch ordering but not concurrent same-tick bot catches — added **H-018 Same-Tick Bot Catch Ordering** mandating strict sequential per-bot compute→commit→emit (no batched processing). (3) D-067 Loadout Rigging had no declared mode owner and conflicted with D-025 (hub unmounts on TOURNAMENT_ACTIVE) — added **D-069 Loadout Rigging Mode Anchor** placing the rigging surface in TOURNAMENT_BRIEFING owned by `tournament.js`, validating against `boats.activeBoatStats()` caps, blocking transitionTo(TOURNAMENT_ACTIVE) until valid. Decision count 69, hazard count 18. Cleared on audit: no circular imports across the 23 files; FSM exits complete in `fishBehavior` Running↔Tired and `modeRouter`; D-021 audio boundary holds; H-005/H-010 cover mode-leak. Architecture now declared **AUDIT CLEAN.** NO CODE generated; STRICT NO CODE LOCK respected.

@@ -1,0 +1,33 @@
+Semantic workspace search is not currently available
+Thinking: I'm applying the surgical edits the user specified for version 1.12.
+Read project_brief.md, lines 1 to 15
+Searched for regex Brief version: 1.11|D-066|## §11 CURRENT STATUS|Phase 3 — Equipment|Phase 7 — Tournament (**/project_brief.md), 6 results. Files: c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md
+Read project_brief.md, lines 143 to 148
+Replacing 7 lines with 10 lines in project_brief.md
+```
+```
+```
+```
+Thinking: I need to add S-013 to the session log and check where the file ends.
+Read project_brief.md, lines 295 to 298
+Replacing 1 lines with 2 lines in project_brief.md
+```
+```
+```
+```
+Brief bumped to v1.12. Amendments applied.
+Brief Changelog — v1.11 → v1.12
+Area Change
+Header / §1 brief_version: 1.12
+§6 DECISIONS D-067 Boat Loadout Constraints — maxRods/maxLures per boat; pre-tournament activeTackle partition; broader inventory unaddressable during TOURNAMENT_ACTIVE
+§6 DECISIONS D-068 Workbench Deferred — crafting.js and Workbench logic punted to v2.0; menu entry returns "Coming Soon" ping; crafting export removed from equipment.js D-066 merge
+§11 Decision count: 66 → 68
+§12 Phase 4 equipment.js carries D-067 activeTackle partition; boats.js adds maxRods/maxLures; crafting deferred per D-068
+§12 Phase 7 hubMenu.js adds pre-tournament Loadout Rigging screen + deferred-stub Workbench entry
+§14 S-013 appended
+Cross-File Implications
+**`equipment/boats.js`** stat block grows two fields: `maxRods: int`, `maxLures: int`.
+**`equipment/equipment.js`** Public API will need a tournament-scoped read view (`getActiveTackle()`) distinct from Hub view (`getInventory()`); enforcement lives at this boundary, not in `castPipeline`.
+**`hub/hubMenu.js`** gains a Loadout Rigging FSM state (lifts items from inventory into `activeTackle`, validates against current boat's caps, blocks tournament entry until valid).
+**State partition rule (new invariant candidate)**: `activeTackle` is read-only during `TOURNAMENT_ACTIVE`; mutation only allowed in `HUB` mode. Worth flagging if this should be promoted to §5 or a new H-017 on next pass.
+NO CODE generated. STRICT NO CODE LOCK remains in force.
