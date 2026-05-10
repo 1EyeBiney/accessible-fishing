@@ -1,4 +1,4 @@
-brief_version: 1.9
+brief_version: 1.10
 
 ## §0 AGENT DIRECTIVES
 - Read this file end-to-end on session boot.
@@ -13,7 +13,7 @@ brief_version: 1.9
 - Focus: Strategic gameplay, equipment management, and dynamic environments over visual reflexes.
 - Architecture: Strict modular split. Single-purpose JavaScript files.
 - Active cycle: Conceptual Design.
-- App version: v0.1.0. Brief version: 1.9.
+- App version: v0.1.0. Brief version: 1.10.
 - State: Conceptual design phase. STRICT NO CODE LOCK active.
 
 ## §2 PROJECT
@@ -130,6 +130,17 @@ brief_version: 1.9
   - D-063 Win-Condition Objective Switch (LOCKED): On tournament-enter, every bot reads `tournament.rules.winCondition` and applies an objective-specific behavior override WITHOUT mutating its personality stats. Mode summary: HEAVIEST_BAG → top-5 swap-or-keep bag logic, patience × 1.00, trophy lures favored; BIGGEST_FISH → single-best-discard logic, patience × 0.60, trophy lures only, trophy gate boosted within the 12% cap; TOTAL_CATCH_COUNT → all-catches-count, patience × 0.50, fast lures favored. Objective mismatch penalty is **mathematically scaled**: `mismatchPenalty = 1 - 0.20 * (1 - targetPreference.alignmentWith(winCondition))` where alignment maps `TROPHY` to BIGGEST_FISH / HEAVIEST_BAG and `VOLUME` to TOTAL_CATCH_COUNT. Penalty applied as a multiplier on `S(skill)` in D-059. Stat-pure bots (perfect alignment) take no penalty.
 
   - D-064 Bot Count Scaling (LOCKED): Tournament `competitorCount` scales by tier. Player + N-1 AI bots where N = `[5, 6, 6, 7, 8]` for tier 1..5. Slot fill rule: sample distinct bots from the personality archetype roster weighted by tier (low tiers favor GRINDER / RUN_AND_GUN; high tiers favor TROPHY_HUNTER / METHODICAL / legendary personalities like Bill the Legend).
+
+  - D-065 Procedural Synth Mapping (LOCKED): `audio/synthGraph.js` owns the math for all procedural-audio mappings. Math is referential-transparent (pure functions of input scalars) and decoupled from any subsystem state. Locked constants and formulas:
+    - **Tension → Hz** (consumes D-035 FIGHT_TENSION): `freqHz(t) = TENSION_HZ_BASE * 2^(t * TENSION_OCTAVES)` with `TENSION_HZ_BASE = 220` (A3), `TENSION_OCTAVES = 2`, `TENSION_HZ_MAX = 880` (A5). Curve is **exponential** (musical/log-perceptual), implemented via Web Audio `linearRampToValueAtTime` between coalesced events. Granularity preserves the D-035 Δ>0.02 gate — no scale-snapping.
+    - **Anti-fatigue rules**: above `t ≥ 0.85`, oscillator gain drops 30% (paradoxical “duck at peak” keeps pitch info without screech reflex). Timbre crossfades from sine (t=0) to soft-clipped sawtooth (t=1) for drama via harmonics, not loudness. At `t ≤ 0.05` (slack territory), oscillator mutes and a low ambient noise bed plays so HOOK_SHAKEN grace isn’t silent. Edge events (phase / threshold) use separate voices and never compete with the tension oscillator.
+    - **Finder ping** (consumes D-041 FISH_FINDER_RESULTS menu navigation): single entry point `playFinderPing({depthM, pressure, presenceHint, spook})`. Fire-and-forget (no queue). Mutually exclusive with cast/retrieve/fight per D-043 scan lockout.
+    - **Depth → ping Hz**: `pingHz(depthM) = 440 * 2^(-depthM / 6)` — inverse (shallow = high, deep = low); halves every 6 meters.
+    - **Pressure → noise gain** (overlay on ping): `noiseGain(p) = 0.05 + 0.15 * (p / MAX_PRESSURE)`. Low pressure = clean tone; high pressure = audibly hashy.
+    - **Presence hint → envelope** (PRO+ finder only): NONE = single 250ms ping; TRACE = single 250ms ping + 80ms faint tail; SCATTERED = two pings 80ms apart; SCHOOLED = three pings 60ms apart. Multi-ping envelope is the primary auditory channel for presence — NO TTS for this field.
+    - **Spook → high-shelf cut** (PRO+ finder only): high-frequency content attenuated as spook rises; level 5 cuts everything above 800Hz by 12dB (“far away / muffled”).
+    - **TTS coexistence**: finder ping is procedural and arrives in ~30ms; TTS short-form summary (categorical fields only: cover type, species band) is queued NORMAL priority separately via `audio/ttsQueue.js`. Ping never blocks TTS; TTS never delays ping. Preserves D-021 audio boundary.
+    - **Synth voice precaching**: all voices (tension oscillator, ping voice, noise overlay) are pre-built and cached at audio boot per H-009 to eliminate cold-synth first-trigger latency.
 ## §7 PREFERENCES
 - Full, unabbreviated files for code generation.
 - Copy buttons for all generated changelogs and prompts.
@@ -210,7 +221,7 @@ brief_version: 1.9
 - [ ] Phase 5: Fish & Strikes (species, population, strikeModel, biteTimer, fishStateMachine — Running↔Tired FSM, pressureModel per D-039)
 - [ ] Phase 6: AI & Competition (brainBase, primeDirective, tournamentScheduler with D-059 headless equation + D-060 cooldown cadence, six archetype personalities per D-058/D-064, tournament/circuit with D-056 weekly calendar, leaderboard with D-061 SIMULATED_CATCH pre-computed impact, scoring, weekly arms-race tier advance per D-054, win-condition objective switch per D-063)
 - [ ] Phase 7: Hub & Economy (hub/*, economy, payout, weighIn, single-currency wallet, auto-save triggers per D-020)
-- [ ] Phase 8: Audio Layer (audio/* — audioManager, audioRoutes, ttsQueue, synthGraph, sfxBank, musicBed; procedural-first per D-028)
+- [ ] Phase 8: Audio Layer (audio/* — audioManager, audioRoutes, ttsQueue, synthGraph implementing D-065 procedural-synth mappings (tension→Hz exponential 220→880Hz, finder ping depth→Hz, pressure→noise, presence→envelope, spook→high-shelf), sfxBank, musicBed; procedural-first per D-028; voices pre-cached at audio boot per H-009)
 - [ ] Phase 9: Engine Integration & Replay (engine.js wiring, deterministic replay test, mount/unmount leak test per H-005, weigh-in fast-forward determinism test per H-008)
 
 ## §13 OPEN QUESTIONS
@@ -227,3 +238,4 @@ brief_version: 1.9
 	- S-008 (v1.7): Phase 2 of 3 data modeling complete. Locked Equipment/Entity Triangle schemas (D-044). Locked 7-step rod power ladder (D-045), 9 lure categories (D-046), 5 fish fight styles (D-047), hand-tuned lure-to-species affinity (D-048), time-decay lure memory (D-049), 300ms hookset window floor (D-050), live bait vigor as consumable (D-051), mismatched lure penalty as accuracy-only (D-052), and per-species diurnal multipliers (D-053). NO CODE generated; STRICT NO CODE LOCK respected.
 
 	- S-009 (v1.8): Tournament & Career model locked. Arms Race AI progression (D-054), infinite repeatable tournaments (D-055), endless calendar with 1-per-week cadence (D-056), and Lake-owned dynamic weather (D-057) are now core. Special events deferred. NO CODE generated; STRICT NO CODE LOCK respected.  - S-010 (v1.9): Phase 3 of 3 data modeling COMPLETE. All AI Bot Brain math and schemas locked. Six personality archetypes confirmed (D-058): GRINDER, TROPHY_HUNTER, OPPORTUNIST, GAMBLER, METHODICAL, RUN_AND_GUN with hand-curated `lureRotation` per bot. Locked headless success equation (D-059) — pure math, no desperation mode, Trophy Hunter trophy rate capped at 12%. Locked bot cooldown cadence (D-060) with 0.70× under-tier penalty. Locked SIMULATED_CATCH event schema (D-061) — `lureId` intentionally omitted to prevent AI tackle reverse-engineering; SIMULATED_TOURNAMENT_SKUNK event approved for zero-fish bots. Locked TTS priority ladder (D-062). Locked win-condition objective switch with mathematically-scaled mismatch penalty (D-063). Locked bot count scaling 5→8 by tier (D-064). Added H-015 (AI sub-stream determinism) and H-016 (leaderboard-before-emit atomic ordering). Updated §11 to reflect ALL THREE PHASES OF DATA MODELING COMPLETE. Updated §12 Phase 6 to reference all new decisions. Engine is fully spec'd and ready for `INITIATE PHASE [X]` override to lift NO CODE LOCK. NO CODE generated; STRICT NO CODE LOCK respected.
+  - S-011 (v1.10): Procedural audio math locked (D-065). Tension→Hz: exponential 220Hz (A3) → 880Hz (A5), 2-octave span, continuous ramp (no scale snapping), anti-fatigue duck at t≥0.85, sine→sawtooth timbre blend, slack ambient bed. Finder ping math: single `playFinderPing` entry point; depth→Hz inverse (440 * 2^(-depthM/6)); pressure→noise gain overlay; presence→multi-ping envelope (NONE/TRACE/SCATTERED/SCHOOLED) replacing TTS for that field; spook→high-shelf cut for muffled “far away” perception. TTS short-form runs in parallel via D-021 audio boundary. §12 Phase 8 updated to reference D-065 math. NO CODE generated; STRICT NO CODE LOCK respected.

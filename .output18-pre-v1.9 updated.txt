@@ -1,0 +1,26 @@
+Semantic workspace search is not currently available
+Thinking: I'm applying the v1.9 patch and incorporating all the associated rulings.
+Apply Patch
+Replacing 9 lines with 26 lines in project_brief.md
+```
+```
+```
+```
+project_brief.md (/c:/nbs/afish/project_brief.md)
+bumped to brief_version: 1.9. Phase 3 of 3 data modeling locked. Engine fully spec'd and awaiting INITIATE PHASE [X] override.
+Brief Changelog — v1.8 → v1.9
+Area Change
+Header / §1 brief_version: 1.9
+§6 DECISIONS D-058 Bot Profile Schema — six archetypes locked (GRINDER, TROPHY_HUNTER, OPPORTUNIST, GAMBLER, METHODICAL, RUN_AND_GUN); hand-curated lureRotation per bot
+ D-059 Headless Success Equation — full P_catch formula clamped [0.05, 0.95]; weight sampling with tierWeightCurve; Trophy Hunter trophy rate capped at 12%; no desperation mode
+ D-060 Bot Cooldown Cadence — baseTickMs(tier=1..5) = [180000..60000]; weather modifier; 0.70× under-tier penalty
+ D-061 SIMULATED_CATCH Event Schema — leaderboardImpact pre-computed; `lureId` intentionally omitted; SIMULATED_TOURNAMENT_SKUNK for zero-fish bots
+ D-062 TTS Priority Ladder — URGENT / HIGH / NORMAL / LOW with coalescing rules
+ D-063 Win-Condition Objective Switch — mathematically-scaled mismatch penalty 1 - 0.20 * (1 - alignment)
+ D-064 Bot Count Scaling — N = [5, 6, 6, 7, 8] by tier
+§8 HAZARDS H-015 AI Sub-Stream Determinism (rngStream(&#39;aiBrain:&#39;+botId) / rngStream(&#39;aiCatch:&#39;+botId))
+ H-016 Leaderboard-Before-Emit atomic ordering for SIMULATED_CATCH
+§11 CURRENT STATUS Updated: ALL THREE PHASES OF DATA MODELING COMPLETE; awaiting INITIATE PHASE [X]
+§12 ROADMAP Phase 6 expanded to reference D-058/D-059/D-060/D-061/D-063/D-064 + D-054 weekly arms-race tier advance
+§14 SESSION LOG S-010 (v1.9) appended with full ruling summary
+No code generated. STRICT NO CODE LOCK remains in force.
