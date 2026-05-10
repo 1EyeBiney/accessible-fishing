@@ -1,0 +1,12 @@
+{
+  "name": "accessible-fishing",
+  "version": "0.1.0",
+  "description": "Audio-first, headless fishing simulation for blind players.",
+  "type": "module",
+  "scripts": {
+    "harness": "node tests/harness.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

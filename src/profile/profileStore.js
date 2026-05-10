@@ -147,6 +147,12 @@ function _mergeWithDefaults(loaded) {
  * @throws if the file exists but cannot be read (e.g. permission error)
  */
 async function _readRaw(filePath) {
+  // In-memory store takes priority over the filesystem — allows _seedInMemory()
+  // to inject test profiles even in Node.js environments where fs is available.
+  if (_inMemory.has(filePath)) {
+    return _inMemory.get(filePath);
+  }
+
   const fs = await _getFs();
 
   if (fs !== null) {
@@ -159,8 +165,7 @@ async function _readRaw(filePath) {
       throw err; // Re-throw genuine read errors
     }
   } else {
-    // In-memory fallback
-    return _inMemory.has(filePath) ? _inMemory.get(filePath) : null;
+    return null;
   }
 }
 
@@ -172,6 +177,13 @@ async function _readRaw(filePath) {
  * @returns {Promise<void>}
  */
 async function _writeRaw(filePath, json) {
+  // If this path was seeded into the in-memory store, keep writes in-memory too
+  // so the test harness remains fully isolated from the real filesystem.
+  if (_inMemory.has(filePath)) {
+    _inMemory.set(filePath, json);
+    return;
+  }
+
   const fs = await _getFs();
 
   if (fs !== null) {
@@ -313,4 +325,4 @@ function _clearInMemory() {
   _inMemory.clear();
 }
 
-export { load, save, DEFAULT_PROFILE_PATH, _seedInMemory, _clearInMemory };
+export { load, save, _seedInMemory, _clearInMemory };
