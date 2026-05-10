@@ -1,0 +1,149 @@
+Semantic workspace search is not currently available
+Thinking: The user is asking for architectural analysis with brief diffs only, and there's no code lock restriction, so I can provide code examples if needed.
+Strike & Acoustic Fight — Architectural Evaluation (v1.5 Draft)
+NO CODE LOCK acknowledged. Markdown analysis + surgical brief diffs only.
+1. Input State — Continuous Hold Inputs in inputAdapter.js
+The current adapter is edge-triggered (one event per inject()). The fight loop needs level-triggered state ("is Spacebar currently held?") plus accurate hold-start and hold-end timestamps for fairness and replay determinism (H-004).
+Recommended model: edge events PLUS adapter-owned hold registry
+Do not sample input every tick. Instead, the adapter records two-edge events and exposes a query:
+Event When Payload
+INPUT_&lt;TYPE&gt;_DOWN key/button pressed { type, atMs, source }
+INPUT_&lt;TYPE&gt;_UP key/button released { type, atMs, source, heldMs }
+INPUT_&lt;TYPE&gt; (existing) logical "tap" — emitted on UP if heldMs &lt; TAP_THRESHOLD_MS (~150ms) unchanged
+The adapter maintains a small Map&lt;type, { downAtMs }&gt; of currently-held inputs and exposes:
+`isHeld(type) → boolean`
+`heldDuration(type) → ms` (0 if not held)
+Why this preserves §5 invariants and Watchdog discipline:
+**Backwards compatible.** Existing `INPUT_` tap events still fire for the 5-tap cast (D-014), driven by `_UP` with a duration filter. No Phase 4 module needs to change.
+**Deterministic.** Down/up edges are timestamped against the tournament clock (H-004). Replays feed the exact two edges; the held state is derived, not recorded separately.
+**Lockout-safe (D-015).** If a Bird's Nest lockout engages while a key is held, the adapter emits a synthetic `INPUT__UP { reason: 'LOCKOUT_FORCED_RELEASE' }` so consumers don't get stuck thinking the key is still down. On unlock, the player must re-press to re-engage; the held state does not auto-resume.
+**No polling cost.** The fight loop reads `isHeld()` once per fight tick (cadence below), not the bus.
+Where the fight loop lives
+fight.js registers a clock.every(FIGHT_TICK_MS, ...) recurrence on enter-FIGHT and cancels it on FIGHT_RESOLVED. Per fight tick it:
+queries `inputAdapter.isHeld('SPACEBAR')` and `isHeld('ARROW_DOWN')`;
+advances tension/stamina;
+emits one summary event (see §2).
+This is the same scheduled-cooldown discipline the AI uses (D-013) — reused, not reinvented.
+Open ambiguity to resolve in the brief
+Both Spacebar held AND Down held simultaneously is a real player error. Recommend: mutual exclusion in the model, not the input layer. The adapter accurately reports both as held; fight.js resolves the ambiguity (either "neither effect applies" or "Spacebar wins" — design choice, recommend "neither" to punish panic-mashing). Captured below as D-031.
+2. Procedural Audio Bridge — Continuous Tension without Bus Spam
+The line tension is conceptually continuous but the engine is discrete. Three coupled mechanisms keep the bus clean while letting synthGraph.js produce a smooth pitch ramp:
+2.1 Coarse engine cadence, fine audio cadence
+fight.js ticks at a coarse rate (recommend 60 ms, ~16 Hz). This is plenty for game-logic state changes — tension threshold crossings, fish state flips — and well below the rate at which a pitch change is perceptible as "stepwise."
+The audio side ramps between engine updates. The bus event payload carries not just "current tension" but "where it's going":
+```
+FIGHT_TENSION { 
+  tension: 0..1,            // current value at atMs
+  trend: -1..+1,            // dTension/dTick, normalized
+  atMs,
+  rampToMs                  // engine-clock time when next event is expected
+}
+```
+synthGraph.js consumes this and schedules a Web Audio linearRampToValueAtTime from tension over the window (atMs, rampToMs). Result: smooth pitch glide on the audio side, ~16 events/sec on the bus side. No millisecond spam.
+2.2 Coalescing & threshold-only emission
+Even 16 Hz is wasteful when tension is steady. Add two emit gates inside fight.js:
+**Delta gate:** emit only if `|newTension - lastEmittedTension| > 0.02`, OR
+**Time gate:** at minimum every 250 ms regardless (so the audio layer's ramp target stays fresh).
+This drops the typical event rate to 4–8 Hz during idle phases, spiking to 16 Hz during runs. H-007 (TTS backpressure) is unaffected because tension events route to synthGraph, not TTS.
+2.3 Distinct event channels for distinct concerns
+Don't pack everything into one event. Split:
+Event Cadence Consumer
+FIGHT_TENSION coalesced 4–16 Hz synthGraph (continuous pitch)
+FIGHT_PHASE_CHANGED edge only (Running ↔ Tired) synthGraph (timbre swap), ttsQueue (announcement)
+FIGHT_THRESHOLD_CROSSED edge only (e.g., 80% danger, 100% snap, 0% slack) synthGraph (alarm voice), ttsQueue
+FIGHT_RESOLVED once everything
+synthGraph subscribes to FIGHT_TENSION for the continuous voice and to the edge events to gate distinct alarm voices. Audio remains a pure consumer (D-021).
+2.4 Determinism
+FIGHT_TENSION is engine-derived, not audio-derived, so replays are deterministic. The pitch curve a player hears can vary across machines (D-021 already declared this out of scope). What replays must reproduce identically: the sequence of FIGHT_PHASE_CHANGED, FIGHT_THRESHOLD_CROSSED, and FIGHT_RESOLVED events. These are integer-valued state transitions, fully deterministic against the seeded RNG (stream(&#39;fish&#39;)) and the held-input edges.
+2.5 Implication for engine.js
+None. The engine remains a router. fight.js owns the fight loop, registers/unregisters its clock.every handle on enter/exit, and emits via the bus. synthGraph mounts on the bus during BOOT and stays mounted across modes (audio is global).
+3. Surgical Brief Diffs (review before I apply)
+Below are the exact edits to bump
+project_brief.md (/c:/nbs/afish/project_brief.md)
+from v1.4 → v1.5. Tell me to apply them; per §0 NO CODE LOCK, the brief edits themselves are markdown-only and within scope, but I'll wait for your go-ahead before mutating the file to keep the change-control trail clean.
+3.1 Bump version
+```
+brief_version: 1.5
+```
+3.2 Pinned context line update (§1)
+Replace:
+```
+- App version: v0.1.0. Brief version: 1.4.
+```
+With:
+```
+- App version: v0.1.0. Brief version: 1.5.
+```
+3.3 Append to §6 DECISIONS
+```
+- D-029 Input Edge Model: `core/inputAdapter.js` emits `INPUT_<TYPE>_DOWN` and `INPUT_<TYPE>_UP` for every input. The existing `INPUT_<TYPE>` "tap" event is preserved and now fires on UP when `heldMs < TAP_THRESHOLD_MS` (default 150ms). The adapter exposes `isHeld(type)` and `heldDuration(type)` queries. No subsystem polls the bus for held state; consumers query the adapter or subscribe to edges. The 5-tap cast (D-014) consumes tap events only and is unaffected.
+- D-030 Lockout Forced Release: If `inputAdapter.lock()` engages while an input is held, the adapter emits a synthetic `INPUT_<TYPE>_UP { reason: 'LOCKOUT_FORCED_RELEASE' }` for each currently-held input so consumers cannot leak hold state. Re-engaging requires a fresh DOWN after unlock.
+- D-031 Fight Input Conflict: While both `SPACEBAR` (reel) and `ARROW_DOWN` (give drag) are held simultaneously, neither effect applies. Tension drifts toward equilibrium by a small idle decay. Punishes panic-mashing without requiring input-layer conflict resolution.
+- D-032 Strike Pipeline: `fish/strikeModel.js` evaluates bite probability on cast splashdown (CAST_LANDED) using lure-depth-vs-fish-depth match, lure profile vs species preference, and rejects if `castSpookModel.isSpooked(offset, atMs)`. On success, schedules a bite timer via `clock.schedule(rngStream('fish').int(min,max), ...)`.
+- D-033 Hookset Trap & Trigger: Pre-bite, `fish/strikeModel.js` emits 1–N `BITE_NIBBLE` events. Any input during a NIBBLE_WINDOW after a nibble cancels the cast (lure pulled). The `BITE_THUD` event opens a HOOKSET_WINDOW (default 600ms). An `INPUT_ARROW_UP` (or configurable hookset key) inside the window transitions to FIGHT; outside the window or wrong key cancels the cast. All windows are tournament-clock relative for replay determinism.
+- D-034 Acoustic Fight Loop: `casting/fight.js` registers a `clock.every(FIGHT_TICK_MS=60, ...)` recurrence on FIGHT enter; cancels on FIGHT_RESOLVED. Per tick: read `inputAdapter.isHeld('SPACEBAR')` and `isHeld('ARROW_DOWN')`, advance tension and fish stamina, evaluate Running↔Tired transitions, emit coalesced events.
+- D-035 Fight Event Channels: `fight.js` emits four distinct channels: `FIGHT_TENSION { tension, trend, atMs, rampToMs }` (coalesced; emitted only when |Δtension|>0.02 OR every 250ms), `FIGHT_PHASE_CHANGED` (edge), `FIGHT_THRESHOLD_CROSSED` (edge: SLACK_DANGER, SNAP_DANGER, SNAP, SLACK_LOST), `FIGHT_RESOLVED` (terminal). `audio/synthGraph.js` consumes `FIGHT_TENSION` for continuous pitch via Web Audio `linearRampToValueAtTime` between events; consumes edge events for distinct alarm voices.
+- D-036 Fight Failure Modes: Tension == 1.0 → `LINE_SNAPPED` (fish lost). Tension stays at 0.0 longer than `SLACK_GRACE_MS` (default 1500ms) → `HOOK_SHAKEN` (fish lost). Successful reel-in to landing distance → `FISH_LANDED`.
+```
+3.4 Append to §8 KNOWN HAZARDS
+```
+- H-010 Held-Input Leak Across Mode Change: A `MODE_CHANGED` event while keys are held could leave consumers stuck. Mitigation: `core/modeRouter.js` calls `inputAdapter.releaseAll()` (synthetic UP for every held input) on every mode transition, even pause/resume.
+- H-011 Fight Tick vs Audio Frame Drift: If `FIGHT_TICK_MS` is set too high, audio ramps will audibly stair-step. If too low, bus traffic spikes. 60ms with delta-gated emission is the declared sweet spot. Changes to this constant require a brief amendment.
+- H-012 Strike Timer in Fast-Forward: D-026 weigh-in fast-forward must NOT skip past pending bite timers; the clock fast-forward path already executes scheduled callbacks in order, so this is a regression-test target, not a code change.
+```
+3.5 Replace the casting line in §9 CORE FILES
+Replace:
+```
+- `src/casting/` (castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, fight.js)
+```
+With:
+```
+- `src/casting/` (castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, hookset.js, fight.js, tensionModel.js)
+```
+Rationale: Hookset (Trap/Trigger) and the tension-state math each warrant single-purpose modules. fight.js becomes a thin orchestrator over tensionModel.js (pure math: tension/stamina/phase) and inputAdapter queries.
+3.6 Replace the fish line in §9 CORE FILES
+Replace:
+```
+- `src/fish/` (species.js, population.js, strikeModel.js)
+```
+With:
+```
+- `src/fish/` (species.js, population.js, strikeModel.js, biteTimer.js, fishStateMachine.js)
+```
+Rationale: Bite scheduling (the random pre-bite delay + nibble emission) and the Running↔Tired FSM are independent concerns from probability calculation.
+3.7 Append to §10 GLOSSARY
+```
+- Edge Event: `INPUT_<TYPE>_DOWN` / `INPUT_<TYPE>_UP` paired events with tournament-clock timestamps; basis for both tap detection and continuous-hold queries.
+- Tap Event: Logical `INPUT_<TYPE>` event emitted on UP when held < TAP_THRESHOLD_MS (D-029).
+- Trap & Trigger: Hookset mechanic — punish input during nibble (Trap), reward input within 600ms of THUD (Trigger).
+- Tension Event Channels: Split bus channels for fight state (D-035): coalesced continuous, phase edges, threshold edges, terminal.
+- Coalesced Emission: Bus event guarded by both a delta gate (Δ>0.02) and a time gate (≤250ms) to keep audio smooth without spamming the bus.
+```
+3.8 Replace §12 ROADMAP
+Replace:
+```
+- [ ] Phase 4: Casting & Fighting (castPower, castTiming, castValidator, castResolver, castSpookModel, fight)
+- [ ] Phase 5: Fish & Strikes (species, population, strikeModel)
+```
+With:
+```
+- [ ] Phase 4a: Casting (castPower, castTiming, castValidator, castResolver, castSpookModel)
+- [ ] Phase 4b: Hookset & Fight (hookset.js with Trap/Trigger windows; tensionModel.js pure math; fight.js orchestrator with `clock.every(60ms)` loop and coalesced FIGHT_TENSION events)
+- [ ] Phase 4c: Adapter Edge Upgrade (inputAdapter DOWN/UP edges, isHeld, releaseAll, lockout forced-release per D-029/D-030)
+- [ ] Phase 5: Fish & Strikes (species, population, strikeModel, biteTimer, fishStateMachine — Running↔Tired FSM)
+```
+3.9 Append to §14 SESSION LOG
+```
+- S-006 (v1.5): Defined Strike, Hookset (Trap & Trigger), and Acoustic Fight mechanics. Added D-029 (input edge model with held-state queries — backward compatible with D-014 taps), D-030 (lockout forced release), D-031 (fight input conflict resolution), D-032 (strike pipeline), D-033 (hookset Trap/Trigger windows, tournament-clock relative), D-034 (60ms fight tick via clock.every), D-035 (four-channel fight event split with coalesced FIGHT_TENSION), D-036 (snap/slack/landed failure modes). Added H-010 (held-input mode-change leak → releaseAll), H-011 (fight tick cadence sweet spot), H-012 (bite timers must survive weigh-in fast-forward — regression test target). Expanded §9 with casting/hookset.js, casting/tensionModel.js, fish/biteTimer.js, fish/fishStateMachine.js. Restructured Phase 4 into 4a/4b/4c. NO CODE generated; conceptual design only per persistent NO CODE LOCK.
+```
+Open Questions for v1.5 Lock-In
+Batched per §0:
+**Hookset key:** I used `ARROW_UP` to match the natural "rod up" gesture. Confirm, or specify (e.g., Spacebar tap, dedicated key).
+**Nibble count:** fixed (always 2 nibbles before THUD), random within range (1–3), or species-dependent (smart species nibble more)?
+**Hookset window length:** confirm 600ms, or species/rod-dependent (a fast-action rod could grant a longer window)?
+**Slack grace:** confirm `SLACK_GRACE_MS = 1500` for `HOOK_SHAKEN`, or adjust?
+**Tension idle decay (D-031):** when both keys held or neither held, does tension drift to 0, drift to a phase-dependent equilibrium (Running pulls up, Tired pulls down), or stay flat? Recommend phase-dependent equilibrium — it makes Tired phases the strategic reel-in window.
+**Multi-input chord vs strict mutex:** D-031 currently says "neither effect." Confirm, or allow one to dominate (Spacebar wins / first-pressed wins).
+Awaiting your go-ahead to apply the diffs to
+project_brief.md (/c:/nbs/afish/project_brief.md)
+.

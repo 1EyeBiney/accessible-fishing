@@ -1,4 +1,4 @@
-brief_version: 1.4
+brief_version: 1.5
 
 ## §0 AGENT DIRECTIVES
 - Read this file end-to-end on session boot.
@@ -13,7 +13,7 @@ brief_version: 1.4
 - Focus: Strategic gameplay, equipment management, and dynamic environments over visual reflexes.
 - Architecture: Strict modular split. Single-purpose JavaScript files.
 - Active cycle: Conceptual Design.
-- App version: v0.1.0. Brief version: 1.4.
+- App version: v0.1.0. Brief version: 1.5.
 - State: Conceptual design phase. STRICT NO CODE LOCK active.
 
 ## §2 PROJECT
@@ -69,6 +69,14 @@ brief_version: 1.4
 - D-026 Weigh-In Early: The player may end a tournament run early at the dock POI. On WEIGH_IN, the player's score locks, then the clock fast-forwards (manual-mode `tick()` to tournament end-time) so Scheduled-AI opponents finish their runs deterministically. After fast-forward, results are computed and mode transitions to TOURNAMENT_RESULTS, then HUB. The fast-forward path uses the same clock callbacks as real-time play — no separate simulation code path.
 - D-027 Single Currency v0.1: One wallet field `state.hub.money`. Sponsorships, reputation, and gated tiers are deferred. `tournament/payout.js` writes only to this field.
 - D-028 Procedural Audio Synthesis: `audio/sfxBank.js` prioritizes Web Audio API procedural synthesis (oscillators, filters, white-noise nodes) over MP3 samples for UI clicks, splashes, reel zips, and tension snaps. Sample files are reserved for content that cannot be reasonably synthesized (e.g., music beds, distinctive ambience). New module `audio/synthGraph.js` owns reusable synth voices; `sfxBank.js` is the lookup/dispatch surface.
+- D-029 Input Edge Model: `core/inputAdapter.js` emits `INPUT_<TYPE>_DOWN` and `INPUT_<TYPE>_UP` for every input. The existing `INPUT_<TYPE>` "tap" event is preserved and now fires on UP when `heldMs < TAP_THRESHOLD_MS` (default 150ms). The adapter exposes `isHeld(type)` and `heldDuration(type)` queries. No subsystem polls the bus for held state; consumers query the adapter or subscribe to edges. The 5-tap cast (D-014) consumes tap events only and is unaffected.
+- D-030 Lockout Forced Release: If `inputAdapter.lock()` engages while an input is held, the adapter emits a synthetic `INPUT_<TYPE>_UP { reason: 'LOCKOUT_FORCED_RELEASE' }` for each currently-held input so consumers cannot leak hold state. Re-engaging requires a fresh DOWN after unlock. Same forced release fires on every `MODE_CHANGED` via `inputAdapter.releaseAll()` (see H-010).
+- D-031 Fight Input Conflict & Idle Decay: STRICT MUTEX. While both `SPACEBAR` (reel) and `ARROW_DOWN` (give drag) are held simultaneously, neither effect applies; tension reverts to the phase-dependent idle decay. Idle decay (no input or mutex-cancelled input) is phase-dependent: in Running phase tension drifts UP toward a Running equilibrium; in Tired phase tension drifts DOWN toward a Tired equilibrium. Tired is therefore the strategic reel-in window.
+- D-032 Strike Pipeline: `fish/strikeModel.js` evaluates bite probability on cast splashdown (CAST_LANDED) using lure-depth-vs-fish-depth match, lure profile vs species preference, and rejects if `castSpookModel.isSpooked(offset, atMs)`. On success, schedules a bite timer via `clock.schedule(rngStream('fish').int(min,max), ...)` through `fish/biteTimer.js`. Nibble count is DYNAMIC — computed per bite by `strikeModel` from species intelligence, environmental conditions (shade, time of day), and the fish's current mood-to-eat. Not a fixed value.
+- D-033 Hookset Trap & Trigger: Pre-bite, `fish/strikeModel.js` (via `biteTimer`) emits 1–N `BITE_NIBBLE` events (count from D-032). Any input during the NIBBLE_WINDOW after a nibble cancels the cast (lure pulled). The `BITE_THUD` event opens a HOOKSET_WINDOW. Baseline window is 750ms (chosen from prior accessible-game audio-reflex testing) and shrinks dynamically based on smarter species, poorer environmental conditions, or mismatched equipment — never grows beyond baseline. The hookset key is `ARROW_UP` (matches "rod up" gesture). An `INPUT_ARROW_UP_DOWN` edge inside the window transitions to FIGHT; outside the window, wrong key, or any input during a NIBBLE cancels the cast. All windows are tournament-clock relative for replay determinism.
+- D-034 Acoustic Fight Loop: `casting/fight.js` registers a `clock.every(FIGHT_TICK_MS=60, ...)` recurrence on FIGHT enter; cancels on FIGHT_RESOLVED. Per tick: read `inputAdapter.isHeld('SPACEBAR')` and `isHeld('ARROW_DOWN')`, advance tension and fish stamina via `casting/tensionModel.js` (pure math), drive Running↔Tired transitions via `fish/fishStateMachine.js`, emit coalesced events.
+- D-035 Fight Event Channels: `fight.js` emits four distinct channels: `FIGHT_TENSION { tension, trend, atMs, rampToMs }` (coalesced; emitted only when |Δtension|>0.02 OR every 250ms), `FIGHT_PHASE_CHANGED` (edge), `FIGHT_THRESHOLD_CROSSED` (edge: SLACK_DANGER, SNAP_DANGER, SNAP, SLACK_LOST), `FIGHT_RESOLVED` (terminal). `audio/synthGraph.js` consumes `FIGHT_TENSION` for continuous pitch via Web Audio `linearRampToValueAtTime` between events; consumes edge events for distinct alarm voices.
+- D-036 Fight Failure Modes: Tension == 1.0 → `LINE_SNAPPED` (fish lost). Tension at 0.0 continuously for `SLACK_GRACE_MS = 1500` → `HOOK_SHAKEN` (fish lost). Successful reel-in to landing distance → `FISH_LANDED`.
 
 ## §7 PREFERENCES
 - Full, unabbreviated files for code generation.
@@ -85,6 +93,9 @@ brief_version: 1.4
 - H-007 Audio Queue Backpressure: A flood of bus events (rapid sonar pings, fast travel) can swamp the TTS queue. Mitigation: `audio/ttsQueue.js` enforces priority + coalescing (drop duplicate `SONAR_PING` within window).
 - H-008 Weigh-In Fast-Forward Determinism: D-026 fast-forwards the clock to simulate AI completion. The fast-forward MUST drive the same `clock.tick()` path used in real-time play so AI scheduled callbacks fire identically. A separate "simulate remaining tournament" code path would diverge from live play and is forbidden.
 - H-009 Synth Audio Latency: Procedural SFX (D-028) constructed on the audio thread can introduce first-trigger latency on cold synth voices. Mitigation: `audio/synthGraph.js` pre-builds and caches voice graphs at audio boot.
+- H-010 Held-Input Leak Across Mode Change: A `MODE_CHANGED` event while keys are held could leave consumers stuck. Mitigation: `core/modeRouter.js` calls `inputAdapter.releaseAll()` on every mode transition, emitting synthetic UP edges for every held input (per D-030).
+- H-011 Fight Tick vs Audio Frame Drift: If `FIGHT_TICK_MS` is set too high, audio ramps audibly stair-step; too low, bus traffic spikes. 60ms with delta-gated emission (D-035) is the declared sweet spot. Changes to this constant require a brief amendment.
+- H-012 Strike Timer in Fast-Forward: D-026 weigh-in fast-forward must NOT skip past pending bite timers; the clock fast-forward path already executes scheduled callbacks in order, so this is a regression-test target, not a code change.
 
 ## §9 CORE FILES (Proposed Modular Split)
 - `src/core/` (eventBus.js, clock.js, rng.js, stateStore.js, inputAdapter.js, modeRouter.js)
@@ -93,9 +104,9 @@ brief_version: 1.4
 - `src/hub/` (hubMenu.js, baitShop.js, tackleShop.js, boatShop.js, workshop.js, leaderboardsView.js, soundMenu.js, economy.js)
 - `src/world/` (grid.js, lakeGenerator.js, structureIndex.js, poiGraph.js, tileTraits.js)
 - `src/navigation/` (boatController.js, poiTravel.js, microDrift.js, stationKeeping.js, wind.js, motor.js, shallowOverride.js)
-- `src/casting/` (castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, fight.js)
+- `src/casting/` (castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, hookset.js, tensionModel.js, fight.js)
 - `src/equipment/` (rods.js, lures.js, crafting.js, durability.js, liveBait.js, fishFinder.js, boats.js)
-- `src/fish/` (species.js, population.js, strikeModel.js)
+- `src/fish/` (species.js, population.js, strikeModel.js, biteTimer.js, fishStateMachine.js)
 - `src/ai/` (brainBase.js, primeDirective.js, tournamentScheduler.js, personalities/billTheLegend.js)
 - `src/tournament/` (circuit.js, leaderboard.js, scoring.js, payout.js, weighIn.js)
 - `src/engine.js` (boot sequence, mode router wiring, tick loop ownership; no game logic)
@@ -112,6 +123,12 @@ brief_version: 1.4
 - Economy Loop: Tournament winnings → Hub purchases → better stats → better tournament results.
 - Weigh-In Early: Player-initiated early end of a tournament run at the dock; clock fast-forwards AI to completion (D-026).
 - Procedural Audio: SFX synthesized at runtime via Web Audio API graphs rather than sample playback (D-028).
+- Edge Event: `INPUT_<TYPE>_DOWN` / `INPUT_<TYPE>_UP` paired events with tournament-clock timestamps; basis for both tap detection and continuous-hold queries (D-029).
+- Tap Event: Logical `INPUT_<TYPE>` event emitted on UP when held < TAP_THRESHOLD_MS (D-029).
+- Trap & Trigger: Hookset mechanic — punish input during nibble (Trap), reward `ARROW_UP` within the dynamic HOOKSET_WINDOW after THUD (Trigger) (D-033).
+- Tension Event Channels: Split bus channels for fight state (D-035): coalesced continuous, phase edges, threshold edges, terminal.
+- Coalesced Emission: Bus event guarded by both a delta gate (Δ>0.02) and a time gate (≤250ms) to keep audio smooth without spamming the bus.
+- Phase-Dependent Idle Decay: When fight inputs are absent or mutex-cancelled, tension drifts toward a Running or Tired equilibrium based on fish phase (D-031).
 
 ## §11 CURRENT STATUS
 - Active task: Evaluating conceptual mechanics (Lake Size, POIs, Fish Strikes).
@@ -124,8 +141,10 @@ brief_version: 1.4
 - [ ] Phase 2a: POI Fast-Travel (poiTravel, motor outboard cost model, boatController mode routing, equipment/boats.js)
 - [ ] Phase 2b: Micro-Drift (microDrift local frame, wind, momentum, stationKeeping)
 - [ ] Phase 3: Equipment Baseline (rods, lures, durability, liveBait, fishFinder)
-- [ ] Phase 4: Casting & Fighting (castPower, castTiming, castValidator, castResolver, castSpookModel, fight)
-- [ ] Phase 5: Fish & Strikes (species, population, strikeModel)
+- [ ] Phase 4a: Casting (castPower, castTiming, castValidator, castResolver, castSpookModel)
+- [ ] Phase 4b: Hookset & Fight (hookset.js with Trap/Trigger windows; tensionModel.js pure math; fight.js orchestrator with `clock.every(60ms)` loop and coalesced FIGHT_TENSION events)
+- [ ] Phase 4c: Adapter Edge Upgrade (inputAdapter DOWN/UP edges, isHeld, releaseAll, lockout forced-release per D-029/D-030)
+- [ ] Phase 5: Fish & Strikes (species, population, strikeModel, biteTimer, fishStateMachine — Running↔Tired FSM)
 - [ ] Phase 6: AI & Competition (brainBase, primeDirective, tournamentScheduler, personalities, tournament/circuit, leaderboard, scoring)
 - [ ] Phase 7: Hub & Economy (hub/*, economy, payout, weighIn, single-currency wallet, auto-save triggers per D-020)
 - [ ] Phase 8: Audio Layer (audio/* — audioManager, audioRoutes, ttsQueue, synthGraph, sfxBank, musicBed; procedural-first per D-028)
@@ -140,3 +159,4 @@ brief_version: 1.4
 - S-003 (v1.2): Adopted D-013 Continuous Real-Time Clock. Locked Phase 4 cast model (D-014/D-015/D-016). Added D-011/D-012 cast anchoring.
 - S-004 (v1.3): SYSTEM OVERRIDE. Purged unauthorized Phase 0 code execution. Enforced STRICT NO CODE lock in directives. Reverted to conceptual design phase.
 - S-005 (v1.4): Injected Hub World, Economy Loop, Audio Manager, Profile/Focus Trap. Locked rulings: profile adapter (D-024), Hub lockout during tournament (D-025), Weigh-In Early with deterministic clock fast-forward (D-026), single currency (D-027), procedural Web Audio synthesis as SFX default (D-028), auto-save on Hub mutations + post-tournament (D-020). Confirmed boat tradeoff (D-022) is non-monotonic: rowboats access shallow POIs bass boats cannot. Added D-017–D-023 (mode FSM, hub pause, state partition, audio boundary, boats, focus trap). Added H-005–H-009 (mode leak, save tampering, TTS backpressure, weigh-in determinism, synth latency). Expanded §9 with audio/, profile/, hub/, equipment/boats.js, tournament/payout.js, tournament/weighIn.js, audio/synthGraph.js, core/modeRouter.js. Restructured §12 to add Phase 0.5, Phase 7, Phase 8, Phase 9. NO CODE generated; conceptual design only per v1.3 NO CODE LOCK (still active).
+- S-006 (v1.5): Defined Strike, Hookset (Trap & Trigger), and Acoustic Fight mechanics. Locked rulings: hookset key = `ARROW_UP` (D-033), nibble count dynamic per species/environment/mood (D-032), hookset window baseline 750ms shrink-only (D-033), `SLACK_GRACE_MS = 1500` (D-036), phase-dependent idle decay — Running drifts UP, Tired drifts DOWN (D-031), strict mutex on Spacebar+ArrowDown reverts to idle decay (D-031). Added D-029 (input edge model with held-state queries, backward compatible with D-014 taps), D-030 (lockout / mode-change forced release), D-034 (60ms fight tick via clock.every), D-035 (four-channel fight event split with coalesced FIGHT_TENSION), D-036 (snap/slack/landed failure modes). Added H-010 (held-input mode-change leak → releaseAll), H-011 (fight tick cadence sweet spot), H-012 (bite timers must survive weigh-in fast-forward — regression test target). Expanded §9 with casting/hookset.js, casting/tensionModel.js, fish/biteTimer.js, fish/fishStateMachine.js. Restructured Phase 4 into 4a/4b/4c. NO CODE generated; persistent NO CODE LOCK respected.

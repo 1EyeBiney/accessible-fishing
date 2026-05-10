@@ -1,0 +1,40 @@
+Semantic workspace search is not currently available
+Thinking: I need to apply the diffs to update those ruling entries—D-031 needs phase-dependent idle decay logic, D-033 requires a 750ms dynamic window with ARROW_UP as the hookset key, and I should add dynamic nibble count handling to either D-032 or D-033.
+Replacing 11 lines with 31 lines in project_brief.md
+```
+```
+```
+```
+Brief bumped to v1.5. Diffs applied to
+project_brief.md (/c:/nbs/afish/project_brief.md)
+. NO CODE LOCK remains active.
+Brief Changelog — v1.4 → v1.5
+Header / §1
+`brief_version: 1.4 → 1.5`
+§1 pinned context version line updated.
+§6 DECISIONS — Added
+**D-029** Input Edge Model — `INPUT__DOWN` / `INPUT__UP` edges + `isHeld()` / `heldDuration()` queries. `INPUT_` tap event preserved (UP with `heldMs < 150ms`). D-014 5-tap cast unaffected.
+**D-030** Lockout / Mode-Change Forced Release — synthetic UP edges emitted on lockout engage and on every `MODE_CHANGED` via `inputAdapter.releaseAll()`.
+**D-031** Fight Input Conflict & Idle Decay — **strict mutex** (Spacebar + ArrowDown cancel each other), revert to **phase-dependent idle decay**: Running drifts UP, Tired drifts DOWN. Tired = strategic reel-in window.
+**D-032** Strike Pipeline — `strikeModel.js` evaluates on `CAST_LANDED`, schedules bite via `biteTimer.js`. **Nibble count is DYNAMIC** — computed per bite from species intelligence + environment (shade, time of day) + fish mood. Not fixed.
+**D-033** Hookset Trap & Trigger — Hookset key = **`ARROW_UP`**. Baseline window = **750ms** (audio-reflex calibrated), **shrinks only** for smarter species, poor environment, mismatched gear. Input during NIBBLE cancels cast (Trap). All windows tournament-clock relative.
+**D-034** Acoustic Fight Loop — `fight.js` registers `clock.every(FIGHT_TICK_MS = 60ms)` on enter, cancels on `FIGHT_RESOLVED`. Reads `inputAdapter.isHeld()`; delegates math to `tensionModel.js`; phase transitions via `fishStateMachine.js`.
+**D-035** Fight Event Channels — four channels: `FIGHT_TENSION` (coalesced, |Δ|>0.02 OR ≤250ms), `FIGHT_PHASE_CHANGED` (edge), `FIGHT_THRESHOLD_CROSSED` (edge), `FIGHT_RESOLVED` (terminal). `synthGraph.js` ramps pitch via `linearRampToValueAtTime`.
+**D-036** Fight Failure Modes — `LINE_SNAPPED` at tension 1.0; `HOOK_SHAKEN` after `SLACK_GRACE_MS = 1500ms` continuous slack; `FISH_LANDED` on successful reel-in.
+§8 KNOWN HAZARDS — Added
+**H-010** Held-Input Leak Across Mode Change — `modeRouter` calls `releaseAll()` on every transition.
+**H-011** Fight Tick vs Audio Frame Drift — 60ms + delta-gated emission is the locked sweet spot; changes require brief amendment.
+**H-012** Strike Timer in Fast-Forward — D-026 weigh-in must process pending bite timers in order; flagged as a regression-test target.
+§9 CORE FILES — Expanded
+`src/casting/` now: `…castSpookModel.js, hookset.js, tensionModel.js, fight.js`
+`src/fish/` now: `…strikeModel.js, biteTimer.js, fishStateMachine.js`
+§10 GLOSSARY — Added
+Edge Event, Tap Event, Trap & Trigger, Tension Event Channels, Coalesced Emission, Phase-Dependent Idle Decay.
+§12 ROADMAP — Restructured Phase 4
+Phase 4a: Casting (cast pipeline only)
+Phase 4b: Hookset & Fight (hookset.js, tensionModel.js, fight.js)
+Phase 4c: Adapter Edge Upgrade (DOWN/UP edges, isHeld, releaseAll)
+Phase 5: …added `biteTimer`, `fishStateMachine`
+§14 SESSION LOG
+**S-006 (v1.5)** entry appended capturing all six rulings and the new Decisions/Hazards/files.
+Awaiting INITIATE PHASE [X] for any code work.
