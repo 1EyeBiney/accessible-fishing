@@ -1,0 +1,252 @@
+Semantic workspace search is not currently available
+Thinking: I'm mapping out the Phase 2 data schemas for Fish, Lure, and Rod with mathematical interlocks between strikeModel, hookset, and tensionModel—no code yet, just markdown and JSON structures. I need to propose the schemas, flag any open questions, and wait for them to ratify before touching the brief, staying consistent with how we've worked so far. I've laid out the core mechanics and design principles for the fishing system—now I need to formalize the schemas and show how all these parameters actually interlock with each other, then surface any ambiguities that need your sign-off before I start building.
+STRICT NO CODE LOCK acknowledged. Phase 2 of 3 — Equipment & Entity Triangle. Schemas below are conceptual JSON shapes (markdown/text), not executable code. No files created, no src/ writes.
+Phase 2 Proposal — Fish / Lure / Rod Schemas
+Design Axioms (binding all three schemas)
+**Identity / Traits / State partition** (mirrors D-037 tile schema). Rods and Lures are pure traits (no mutable state beyond durability). Fish *species* is traits; an *instance* fish carries state.
+**All cross-entity math runs through normalized [0..1] match scores.** No raw stat comparisons in consumers — every interaction is a `matchScore(a, b) → [0..1]` function owned by the consumer module.
+**No schema field exists without a named consumer.** If `strikeModel.js` / `hookset.js` / `tensionModel.js` / `castResolver.js` doesn't read it, it doesn't ship.
+**Procedural-audio compatibility (D-028)**: every entity exposes an `audio` block of synth-friendly scalars (no asset paths).
+1. ROD SCHEMA
+```
+{
+  "id": "ROD_MED_FAST_001",
+  "displayName": "6'6\" Medium Fast Spinning",
+  // Identity
+  "class":     "SPINNING",          // SPINNING | BAITCAST | SPINCAST
+  "lengthIn":  78,                  // cosmetic + minor cast distance modifier
+  "tier":      2,                   // 1..5; gates availability behind currency
+  // CASTING INTERACTION  (consumed by castResolver.js + castSpookModel.js)
+  "power":  "MEDIUM",               // UL | L | ML | M | MH | H | XH  → maps to pwrIndex 0..6
+  "action": "FAST",                 // SLOW | MOD | MOD_FAST | FAST | XFAST → actionIndex 0..4
+  "lureWeightRangeOz": { "min": 0.25, "max": 0.625, "sweet": 0.375 },
+  //   castDistanceCurve(lureWeightOz) peaks at sweet, falls off as a parabola
+  //   castAccuracyPenalty applied if lure.weightOz outside [min, max]
+  // FIGHT INTERACTION  (consumed by tensionModel.js + hookset.js)
+  "maxLineTension":      0.85,      // tension value at which ROD CONTRIBUTION risks snap
+  //   Note: actual snap is still tensionModel == 1.0 (D-036). maxLineTension biases the
+  //   rod's compliance curve so an over-spec'd rod dampens tension spikes; an under-spec'd
+  //   rod transmits them.
+  "compliance":          0.55,      // [0..1] — how much of fish pull is absorbed by rod bend.
+                                    //   Higher action = lower compliance (faster, stiffer tip).
+  "hooksetSensitivity":  1.10,      // multiplier on hookset window width (D-033 baseline 750ms).
+                                    //   FAST action → >1.0 (longer window because tip loads fast).
+                                    //   SLOW action → <1.0 (mushy tip eats the hookset).
+  // DURABILITY (state, mutable)
+  "durability":  { "max": 100, "current": 100, "damagePerSnap": 8 },
+  // AUDIO (procedural)
+  "audio": {
+    "castWhipFreqHz":  280,         // synthesized whip frequency for splash/cast SFX
+    "rodFlexNoiseHz":  120,         // creak frequency under load
+    "snapEventFreqHz": 1100         // snap pitch on LINE_SNAPPED
+  }
+}
+```
+Power → numeric mapping (locked, single source of truth in equipment/rodPowerTable.js):
+Power pwrIndex typical lure oz maxLineTension
+UL 0 1/32 – 1/8 0.55
+L 1 1/16 – 1/4 0.65
+ML 2 1/8 – 3/8 0.75
+M 3 1/4 – 5/8 0.85
+MH 4 3/8 – 3/4 0.92
+H 5 1/2 – 1.5 0.96
+XH 6 1 – 4 0.99
+Action → numeric mapping:
+Action actionIndex compliance hooksetSensitivity
+SLOW 0 0.85 0.70
+MOD 1 0.70 0.85
+MOD_FAST 2 0.60 1.00
+FAST 3 0.50 1.15
+XFAST 4 0.40 1.30
+2. LURE SCHEMA
+```
+{
+  "id": "LURE_CRANK_DD_SHAD_001",
+  "displayName": "Deep Diver Shad",
+  // Identity
+  "category":  "CRANKBAIT",         // CRANKBAIT | JIG | WORM | SPINNERBAIT | TOPWATER |
+                                    //   JERKBAIT | LIVE_BAIT | SPOON | SWIMBAIT
+  "tier":      2,
+  // ROD INTERACTION
+  "weightOz":  0.5,                 // matched against rod.lureWeightRangeOz
+  "profile":   "TREBLE",            // SINGLE | TREBLE | WEEDLESS — affects snagRiskModifier
+  // WATER INTERACTION  (consumed by castResolver.js to seat lure into the tile)
+  "presentation": {
+    "runDepthM":     { "min": 3.0, "max": 5.5 },  // where in column the lure works
+    "actionType":    "DIVING",      // FALLING | SUSPENDING | DIVING | SURFACE | SWIMMING |
+                                    //   BOTTOM_DRAG | DEAD_STICK
+    "retrieveStyles": ["STEADY", "STOP_GO"],      // styles this lure performs natively
+    "noiseProfile":  "MED"          // SILENT | LOW | MED | LOUD — feeds D-038 splash table:
+                                    //   SILENT→splash 0, LOW/MED→NORMAL +1, LOUD→LOUD +3
+  },
+  "snagRiskModifier": {             // multiplier on tile.cover.snagRisk (D-037)
+    "WEEDBED":   1.40,
+    "TIMBER":    1.60,
+    "LILYPADS":  1.50,
+    "BRUSHPILE": 1.70,
+    "ROCKPILE":  1.20,
+    "DOCK":      1.10,
+    "OVERHANG":  1.05,
+    "NONE":      0.10
+  },
+  // FISH INTERACTION  (consumed by strikeModel.js)
+  "presentationProfile": {          // matched against fish.presentationPreferences via dot-product
+    "FALLING":    0.0,
+    "SUSPENDING": 0.1,
+    "DIVING":     0.9,
+    "SURFACE":    0.0,
+    "SWIMMING":   0.7,
+    "BOTTOM":     0.2,
+    "STILL":      0.0
+  },
+  "sizeProfile":      "MEDIUM",     // TINY | SMALL | MEDIUM | LARGE | XL — vs fish.preySizeBand
+  "colorClass":       "NATURAL",    // NATURAL | BRIGHT | DARK | TRANSLUCENT — modified by
+                                    //   ambient light (time of day, water clarity)
+  "speciesAffinity":  {             // hand-tuned overrides; falls back to category defaults
+    "BASS_LM":  1.10,
+    "PIKE":     0.95,
+    "WALLEYE":  1.00,
+    "TROUT":    0.40,
+    "PANFISH":  0.30
+  },
+  // DURABILITY
+  "durability": { "max": 5, "current": 5, "lossOnSnag": 1, "lossOnLand": 0 },
+  // AUDIO
+  "audio": {
+    "splashFreqHz":   { "SILENT": 0, "LOW": 180, "MED": 300, "LOUD": 480 },
+    "wakeNoiseHz":    220,
+    "rattleEnabled":  true,
+    "rattleFreqHz":   620
+  }
+}
+```
+**LIVE_BAIT subtype**: same schema but `durability.lossOnSnag=1, lossOnLand=1`, plus `livePresentation: { vigorMs, deadAfterMs }` driving a passive noise envelope. Enforces D-022 reach-vs-bait tradeoff.
+3. FISH SPECIES SCHEMA
+```
+{
+  "id": "FISH_BASS_LM",
+  "displayName": "Largemouth Bass",
+  // Identity
+  "speciesBand":  "BASS_LM",        // surfaced by ELITE finder (D-042)
+  "preySizeBand": "MEDIUM",         // matches lure.sizeProfile
+  // STRIKE CONTROL  (consumed by strikeModel.js + biteTimer.js)
+  "wariness":     0.55,             // [0..1] — base resistance; multiplied by tile.spook + pressure
+  "intelligence": 0.65,             // [0..1] — penalty applied to repeat-presentation of same lure
+  "moodVolatility": 0.70,           // [0..1] — variance in dynamic nibble count (D-032)
+  "nibbleBand":   { "min": 1, "max": 4, "mean": 2 },  // dynamic range; D-032 sample target
+  "habitat": {
+    "depthAffinityM":  { "min": 1.0, "max": 6.0, "peak": 3.0 },
+    "bottomAffinity":  { "MUD": 0.4, "SAND": 0.5, "GRAVEL": 0.8, "ROCK": 0.9 },
+    "coverAffinity":   { "NONE": 0.2, "WEEDBED": 0.95, "TIMBER": 0.90, "LILYPADS": 0.85,
+                         "DOCK": 0.80, "BRUSHPILE": 0.85, "ROCKPILE": 0.70, "OVERHANG": 0.60 },
+    "tagAffinity":     { "AMBUSH_POINT": 1.00, "WEEDBED_EDGE": 0.95, "DROP_OFF_EDGE": 0.85,
+                         "POINT": 0.75, "TRANSITION": 0.70, "OPEN_FLAT": 0.30 }
+  },
+  "presentationPreferences": {     // dot-product target for lure.presentationProfile
+    "FALLING":    0.6,
+    "SUSPENDING": 0.7,
+    "DIVING":     0.8,
+    "SURFACE":    0.5,
+    "SWIMMING":   0.9,
+    "BOTTOM":     0.6,
+    "STILL":      0.3
+  },
+  "diurnal": {                      // multiplier on strike rate by clock window
+    "DAWN":   1.30, "DAY":   0.85, "DUSK":  1.40, "NIGHT": 0.50
+  },
+  // ACOUSTIC FIGHT CONTROL  (consumed by tensionModel.js + fishStateMachine.js)
+  "stamina":          { "max": 1.0, "regenPerSec": 0.0, "drainPerSec": 0.18 },
+  //   stamina is the scalar that drives Running → Tired transition (D-031). At 0.0 fish
+  //   is fully Tired; reel-in to landing distance triggers FISH_LANDED (D-036).
+  "fightStyle":       "BULLDOG",    // BULLDOG | RUNNER | JUMPER | DIVER | THRASHER
+                                    //   → selects pull-force pattern function
+  "pullForceCurve": {
+    "RUNNING_BASE":   0.45,         // baseline tension contribution while Running
+    "RUNNING_SPIKE":  0.30,         // amplitude of phase spikes (jumps, head-shakes)
+    "TIRED_BASE":     0.15,
+    "spikeIntervalMs": { "min": 1200, "max": 2800 }
+  },
+  "tensionMultipliers": {
+    "RUNNING":  1.00,
+    "TIRED":    0.45,
+    "JUMP":     1.25,               // momentary spike events
+    "HEADSHAKE": 1.10
+  },
+  "mouthHardness":    0.60,         // [0..1] — narrows hookset window (D-033)
+  "hookRetention":    0.75,         // [0..1] — resistance to HOOK_SHAKEN at 0.0 tension
+  // SCORING
+  "weight": {                       // kg, sampled per fish instance via seeded RNG
+    "min":  0.4, "max": 4.5, "trophyKg": 3.5,
+    "distribution": "LOGNORMAL"
+  },
+  // AUDIO
+  "audio": {
+    "splashSizeHz":     420,        // base splash pitch on hookset / jump
+    "headshakeFreqHz":  90,
+    "runWhineHz":       380,        // drag whine during Running
+    "tiredSlapHz":      55          // surface slap when Tired
+  }
+}
+```
+Fish Instance (mutable state, NOT in species schema)
+```
+{
+  "instanceId":  "uuid",
+  "speciesId":   "FISH_BASS_LM",
+  "weightKg":    1.84,              // sampled at population-gen time
+  "tileCoord":   { "x": 12, "y": -7 },
+  "moodOffset":  +0.12,             // sampled per-instance from species.moodVolatility
+  "stamina":     1.0,                // mutable during fight
+  "phase":       "RUNNING",          // RUNNING | TIRED | LANDED | LOST
+  "lureMemory":  []                  // recent lure ids it ignored — feeds intelligence penalty
+}
+```
+4. INTERLOCK MATRIX — Where the Math Lives
+Every cell is a function on the LEFT module reading the named fields:
+Module Reads from Rod Reads from Lure Reads from Fish (species + instance) Reads from Tile
+`castResolver.js` lureWeightRangeOz, power.pwrIndex, lengthIn weightOz, presentation.runDepthM, noiseProfile — coord, traits.depth.bottomM, traits.cover.snagRisk
+`castSpookModel.js` — presentation.noiseProfile — state.spook (write)
+`strikeModel.js` — presentationProfile, sizeProfile, colorClass, speciesAffinity, category wariness, intelligence, presentationPreferences, preySizeBand, habitat.*, diurnal, lureMemory (instance) state.spook, state.pressure, traits.depth, traits.bottom, traits.cover, traits.tags
+`biteTimer.js` — presentation.actionType nibbleBand, moodVolatility, instance.moodOffset —
+`hookset.js` hooksetSensitivity — mouthHardness —
+`tensionModel.js` compliance, maxLineTension — pullForceCurve, tensionMultipliers, instance.phase, instance.stamina, hookRetention —
+`fishStateMachine.js` — — stamina.*, pullForceCurve.spikeIntervalMs, instance.stamina (mutable) —
+`pressureModel.js` — — — state.pressure
+Key Equations (proposed; all bounded [0..1] unless noted)
+Cast distance (castResolver.js):
+$$\text{dist} = \text{basePwr}(\text{rod.pwrIndex}) \cdot f(\text{lure.weightOz}, \text{rod.lureWeightRangeOz}) \cdot \text{tapPower}$$
+where $f$ is a parabola peaking at sweet, dropping off at the range edges. Out-of-range lures incur an accuracy penalty (variance on landing tile) — they still cast.
+Strike probability (strikeModel.js):
+$$P_{\text{strike}} = P_{\text{base}}(\text{species,tile}) \cdot M_{\text{lure↔fish}} \cdot M_{\text{lure↔tile}} \cdot S(\text{spook}) \cdot R(\text{pressure}) \cdot D(\text{diurnal}) \cdot I(\text{lureMemory})$$
+$M_{\text{lure↔fish}} = \langle \text{lure.presentationProfile}, \text{fish.presentationPreferences}\rangle \cdot \text{lure.speciesAffinity}[\text{species}]$
+$M_{\text{lure↔tile}}$ = depth band overlap × bottom affinity × cover affinity × tag affinity
+$S(s) = 1 - 0.18 s$ (per-level penalty; spook 5 ⇒ 10% of base)
+$R(p) = 1 - (\text{PRESSURE\_STRIKE\_PENALTY} \cdot p / \text{MAX\_PRESSURE})$ (D-039 — at p=5, multiplier = 0.4)
+$I(\text{mem})$ shrinks if same lure id was just refused by this instance; magnitude scaled by `intelligence`
+Hookset window width (hookset.js, supersedes raw 750ms baseline of D-033 — shrink-only still holds because product ≤ 750ms when species mouthHardness > rod.hooksetSensitivity):
+$$w_{\text{ms}} = 750 \cdot \text{rod.hooksetSensitivity} \cdot (1 - 0.5 \cdot \text{fish.mouthHardness})$$
+Floor at 200ms. Rod with FAST action (1.15) on Bass (mouth 0.6): $750 \cdot 1.15 \cdot 0.70 = 603 \text{ms}$.
+Tension delta per 60ms tick (tensionModel.js):
+$$\Delta T = \big[ F_{\text{fish}}(\text{phase, spike}) \cdot m_{\text{phase}} - C(\text{rod}) \cdot \text{playerInput}(t) - \text{drag} \big] \cdot \Delta t$$
+$F_{\text{fish}}$ samples `pullForceCurve` with phase, intermittent spikes per `spikeIntervalMs`
+Snap when $T \geq 1.0$ → `LINE_SNAPPED` (also damages rod by `damagePerSnap`)
+Slack when $T \leq 0.0$ for ≥`SLACK_GRACE_MS` × (1 − `hookRetention` × 0.5) → `HOOK_SHAKEN`
+Phase transition: `instance.stamina ≤ 0` → `TIRED`; reel-in distance → `FISH_LANDED`
+Phase-dependent idle decay (D-031): when both Spacebar and ArrowDown are held (mutex violation) OR neither is held, $\Delta T$ uses tensionMultipliers[phase] only — Running drifts up toward RUNNING_BASE, Tired drifts down toward TIRED_BASE.
+5. Hazards Implied by These Schemas (proposed additions)
+**H-015 Stat-bloat creep** — every new field invites design drift. Lock the schemas at v1.7 and require a `D-` entry to add a field.
+**H-016 Affinity-table sparsity** — empty enum keys in `bottomAffinity`/`coverAffinity` must default explicitly (proposal: `0.0` if absent), not silently zero through undefined.
+**H-017 Lure-memory unbounded growth** — `instance.lureMemory[]` must be capped (proposal: last 3 lures) or it leaks across long fights.
+6. NO CODE LOCK Acknowledgement
+No files written. No src/ modules touched. The Phase 0 harness on disk (tests/harness.js, src/core/*) is untouched and remains under lock. This response is design-only.
+7. Open Questions Before v1.7 Lock-In
+**Rod power table** — accept the 7-step UL→XH ladder, or collapse to 4 (L/M/H/XH) for v0.1 simplicity?
+**Lure categories** — accept the 9-category list, or trim to 5 day-one (CRANKBAIT, JIG, WORM, SPINNERBAIT, LIVE_BAIT)?
+**Fish style enum** — keep 5 styles (BULLDOG/RUNNER/JUMPER/DIVER/THRASHER) or seed v0.1 with 2 (BULLDOG, RUNNER) and grow?
+**`speciesAffinity` per lure** — hand-tuned table per lure (proposed) vs derived from `category × species` matrix (less data, less expressive)?
+**`lureMemory` cap** — 3? 5? Or time-decay (forget after 60s) instead of count-cap?
+**Mouth hardness shrink floor** — 200ms hard floor proposed. Confirm or set 150 / 250?
+**Out-of-range lure on rod** — accuracy penalty only (proposed), or also a cast-distance penalty AND occasional Bird's Nest trigger?
+**Live bait** — does it occupy a lure slot, a separate slot, or trigger inventory consumption per cast (D-022 reach tradeoff)?
+**Diurnal multiplier source of truth** — per-species (proposed) or a global table modulated by species `dielPattern: DIURNAL|CREPUSCULAR|NOCTURNAL`?
+Provide rulings and I'll bump the brief to v1.7 with D-044… entries plus any new hazards.

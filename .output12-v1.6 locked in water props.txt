@@ -1,0 +1,48 @@
+Semantic workspace search is not currently available
+Thinking: I'm reading the current state of project_brief.md so I can apply the v1.6 surgical edits with precise diffs.
+Read project_brief.md, lines 60 to 162
+Replacing 20 lines with 37 lines in project_brief.md
+```
+```
+```
+```
+Brief bumped to v1.6. Diffs applied to
+project_brief.md (/c:/nbs/afish/project_brief.md)
+. NO CODE LOCK remains active.
+Brief Changelog — v1.5 → v1.6
+Header / §1
+`brief_version: 1.5 → 1.6`
+§1 pinned context version line updated.
+§6 DECISIONS — Added
+**D-037** Water Tile Schema (LOCKED v0.1) — full schema codified: `{id, coord, traits, state}` with bottom enum `{MUD, SAND, GRAVEL, ROCK}` (CLAY/SILT cut), cover enum locked, v0.1 tag taxonomy locked, per-tile `flow` removed (now per-POI only), `state.events[]` diagnostic-only.
+**D-038** Spook Math (LOCKED) — `MAX_SPOOK = 5`, decay 12s/level, splash increments SILENT 0 / NORMAL +1 / LOUD +3, compute-on-read formula stated.
+**D-039** Pressure / Fished-Out Math (LOCKED) — `MAX_PRESSURE = 5`, decay 90s/level, CAST/HOOKSET/CATCH each +1, `PRESSURE_STRIKE_PENALTY = 0.6`, owned by new `fish/pressureModel.js`. Orthogonal to spook.
+**D-040** POI Frame-Boundary Penalty (LOCKED) — fixed **5 in-game minutes** deducted from tournament clock when drift would exceed `frameRadius`.
+**D-041** Fish Finder Menu Pivot — manual cursor removed; SCAN → `FISH_FINDER_RESULTS` → menu navigation → `TARGET_LOCKED` becomes the new Tap-1 anchoring trigger for `castResolver`. New module `casting/targetSelector.js`.
+**D-042** Finder Tiers & Angler's Intuition (LOCKED) — Intuition (no finder) 10s minimal scan; BASIC 6s/cap 4, MID 4.5s/cap 5, PRO 3.5s/cap 6, ELITE 2.5s/cap 8. Presence hints `{NONE, TRACE, SCATTERED, SCHOOLED}`. Exact fish counts never returned (accessibility safety valve).
+**D-043** Scan Mutual Exclusion (LOCKED) — SCAN locked out during cast/retrieve/fight via `state.tournament.scanLocked`. Silent invalidation on pressure/spook threshold crossings; player must manually re-scan.
+§8 KNOWN HAZARDS — Added
+**H-013** Pressure / Spook Conflation Risk — must remain orthogonal; merging breaks single-purpose modules.
+**H-014** Finder ↔ Cast State Coupling — communication only via `scanLocked` flag + `TARGET_LOCKED` / `FISH_FINDER_RESULTS` events; no direct imports between `equipment/fishFinder.js` and `casting/*`.
+§9 CORE FILES — Expanded
+`src/casting/` now includes `targetSelector.js`
+`src/fish/` now includes `pressureModel.js`
+§10 GLOSSARY — Added
+Pressure / Fished-Out
+Compute-on-Read (formalized as the shared spook+pressure pattern)
+Angler's Intuition
+Finder Tier
+Presence Hint
+Target Lock
+Repositioning Penalty
+§11 CURRENT STATUS
+Updated: Phase 1 of 3 data modeling complete; ready for Phase 2 of 3 (Fish & Lure schemas).
+§12 ROADMAP — Updated
+Phase 1 references `tileTraits per D-037`
+Phase 2b references frame-boundary repositioning penalty per D-040
+Phase 3 references Finder tier ladder per D-042 + boats with finder-slot
+Phase 4a now includes `targetSelector` menu-FSM per D-041
+Phase 5 now includes `pressureModel` per D-039
+§14 SESSION LOG
+**S-007 (v1.6)** appended — captures Phase 1 data lock + Fish Finder pivot + all rulings.
+Awaiting next directive — either Phase 2 of 3 (Fish & Lure data modeling) or another override.
