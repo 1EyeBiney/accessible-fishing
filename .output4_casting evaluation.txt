@@ -1,0 +1,108 @@
+Semantic workspace search is not currently available
+Phase 4 Casting — Architectural Review
+Acknowledged. No code this turn. Watchdog rules engaged for the eventual implementation pass.
+1. Mapping to castTiming.js and castResolver.js
+The proposed flow cleanly splits along an existing seam, but it pushes more responsibility onto castResolver.js than the original §9 design implied. The wind puzzle, splashdown state, and drift reconciliation are all resolver concerns, not timing concerns.
+castTiming.js — pure timing state machine
+Single responsibility: convert the 3-tap input stream into a normalized timing result. No grid awareness, no wind awareness, no fish awareness.
+**State machine:** `IDLE → BACKSWING (Tap1) → LOADED (Tap2) → AIRBORNE → SPLASH (Tap3) → DONE`.
+**Inputs:** consumes `INPUT_*` events from `core/inputAdapter.js` (per D-010). Never reads keys directly.
+**Outputs (pure data):**
+```
+{
+  hingeQuality:   0..1   // Tap2 deviation from ideal window
+  hingeTier:      'PIERCING' | 'STANDARD' | 'LOFTED'
+  splashQuality:  0..1   // Tap3 deviation
+  splashTier:     'SILENT' | 'NORMAL' | 'LOUD'
+  flightTicks:    integer  // derived from equipment + hingeTier (low loop = fewer ticks airborne)
+  abortReason:    null | 'TIMEOUT' | 'CANCELED'
+}
+```
+**Why `flightTicks` here, not in resolver:** the loop shape is a function of the rod-loading event, which is a timing concern. The resolver consumes `flightTicks` as an opaque integer.
+**Determinism:** all timing windows must be parameterized (rod-derived) and seeded deterministically, so replays of recorded `INPUT_*` events reproduce identical tier results. No wall-clock reads inside the module.
+castResolver.js — orchestrator over the world
+Consumes the castTiming result + targeting cursor + boat/POI state, then resolves landing.
+Resolution pipeline (declared, single direction — same discipline as H-001):
+```
+1. snapshotTargetIntent(cursorOffset, boatLocalFrameAtT0)
+2. computeWindEffect(localWindVector, hingeTier, flightTicks)
+3. computeBoatMotionDuringFlight(microDrift, flightTicks)   // see §2
+4. resolveLandingOffset = targetIntent + windEffect + boatDelta
+5. clampToPOIFrame(landingOffset)                            // shallowOverride survives here as a clamp
+6. validate(landingOffset)                                   // delegates to castValidator.js — land = abort + warning event
+7. emit CAST_LANDED { offset, splashTier }
+8. applySplashEffect(splashTier, landingOffset)              // spooked state lives in stateStore, written via action
+```
+Two helpers earn their own files (already in §9):
+**`castValidator.js`** — pure predicate: `isLegalLanding(offset, grid, poi)`. Emits `CAST_REJECTED_LAND` event on failure. Called *before* the resolver commits, and again post-wind in case wind pushed an originally-legal cast onto land.
+**`castPower.js`** — given D-004 (Max-Power Calibration), this module reports the **maximum reachable offset radius** for the current rig. The targeting cursor in `microDrift` consults it to constrain cursor travel. It does *not* set distance during execution; distance is "wherever the cursor was committed."
+New module recommended: castSpookModel.js
+The "spooked tile + neighbors, decays over N turns" rule is a discrete world-state effect that touches the strike model, not casting per se. Putting it inside castResolver.js violates single-purpose. Better:
+`castSpookModel.js` exposes `applySplash(offset, splashTier)` and `isSpooked(offset, clock)`.
+`fish/strikeModel.js` consults `isSpooked()` during strike resolution.
+`clock.js` ticks decay; spook entries are stored in the central `stateStore` keyed by POI + offset.
+This keeps the splashdown rule out of casting code and out of fish code — it lives at the boundary, where it belongs.
+2. Edge Case — Drift During Flight
+This is the most important architectural question in your proposal. There are three plausible models. Recommendation first, rationale after.
+Recommendation: Resolve relative to boat position at SPLASHDOWN, with wind applied to the lure independently.
+Reasoning under the Watchdog model:
+**Player intent is a world-space target, not a body-relative vector.** When the player parks the cursor on "weed bed at offset (+2, +3)" they are pointing at a *tile in the local frame*, not "two tiles to my right." Tying the landing to the boat's starting position would mean a strong drift silently invalidates the player's chosen target — exactly the kind of accessibility hostility §5c forbids.
+**However**, freezing the world during flight kills the wind puzzle's tension and breaks D-003 (station-keeping should *matter* during a long cast).
+So the resolution is: target offset is world-anchored (POI-frame anchored), boat moves underneath, wind pushes the lure. Concretely:
+```
+landingOffset_world =
+    targetIntent_world                        // anchored at Tap1
+  + windEffect(hingeTier, flightTicks)        // physics on the lure
+  - 0                                          // boat motion does NOT shift the target
+```
+The boat's drift during flight matters in two real ways instead:
+**Line angle and fight start position** — when `CAST_LANDED` fires, the boat is wherever it drifted to. The fight loop uses the *current* boat position to compute initial line tension and reach. This makes station-keeping (D-003) genuinely strategic without cognitive overload.
+**Cursor lock at Tap1.** The targeting cursor commits at Tap1 (Initiate). After Tap1, drift no longer changes the target. This gives the player a stable mental model: "I locked my target; now I must time the cast and pray to the wind."
+Edge sub-cases to handle explicitly
+**Boat drifts such that target leaves the rig's max range mid-flight.** Decision: **legal**. Power is set by equipment at release; if you already released, the lure flies. The fight just starts with a longer line out.
+**Boat drifts such that target leaves the POI's local frame radius.** Decision: **legal cast, but the lure lands in the *new* POI's frame** if the lake supports adjacent POIs, OR clamped at the boundary with an audio cue. Recommend the clamp for v0.1 — cross-POI casts add too much surface area to validate.
+**Wind shifts mid-flight (clock tick crosses a wind change).** Decision: **lock the wind vector at Tap1**, same as the target. Mid-flight wind shifts are a future feature, not a v0.1 concern. Document this as a known simplification in the brief.
+**Player cancels (e.g., timeout between taps).** `castTiming` emits `abortReason`; resolver never runs; no spook state applied; rod returns to idle. No turn consumed (or partial-turn cost — your call, but it must be declared).
+3. Suggested Refinements
+Two only, per request, both chosen to deepen strategy without adding taps or menus.
+Refinement A: Hinge Tier modulates *line trajectory*, not just wind mitigation.
+Currently the hinge tap reads as a binary "did you mitigate wind." Extend it cheaply by letting hingeTier also control lure entry depth on splashdown:
+`PIERCING` → low, fast loop → lure enters shallow and skips forward 0–1 tiles before settling. Great for shallow weed beds, dangerous near cover.
+`STANDARD` → neutral entry at the target tile.
+`LOFTED` → high arc → lure plunges, gets an immediate depth bonus on entry. Useful for hitting deep drop-offs but maximally exposed to wind.
+This costs nothing in input complexity (the player already executed the tap) but turns Tap 2 into a real strategic choice tied to the structure they're targeting, not just the weather. It also gives castPower.js and lures.js a meaningful interaction surface (a weighted lure penalizes lofted entries differently than a topwater).
+Headless cost: one extra audio cue at splashdown describing entry profile (&quot;low skipping entry&quot; vs &quot;deep plunge&quot;). One sentence in the announcer; massive depth in the strike model.
+Refinement B: Splash spook becomes directional, not radial.
+Instead of "splash spooks the landing tile + all neighbors uniformly," make the spook radiate along the wind direction. A loud splash with an east wind spooks the landing tile and the 1–2 tiles east of it (the sound and surface ripple ride the wind).
+It rewards a player who casts *upwind* of the structure they actually want to hit on their *next* cast — a real-world tactic.
+It punishes downwind sloppy casts harder, because they ruin the very structure the player intended to fish.
+It is a single rule change in `castSpookModel.js` with no extra UI, no extra inputs, and the audio announcement ("loud splash, ripples carry east") is intuitive even for a player encountering it the first time.
+Both refinements live entirely inside the modules already on the table — no new directives required, no §6 reopen.
+4. Brief Update Recommendation (Optional, Surgical)
+If you accept the recommendation in §2 and the new helper module, the brief needs minor surgical edits. Apply only if you concur:
+Append to §6 DECISIONS
+```
+- D-011 Cast Target Anchoring: Targeting cursor commits at Tap 1 and is anchored in POI-frame coordinates for the duration of flight. Boat drift during flight does NOT shift the landing target; wind does. Boat's drifted position at splashdown determines fight start state.
+- D-012 Cast Wind Lock: Wind vector used by the cast resolver is sampled at Tap 1 and held constant for the flight. Mid-flight wind shifts are deferred.
+```
+Append to §8 KNOWN HAZARDS
+```
+- H-003 Cast Spook Coupling: Splashdown spook state is consumed by `fish/strikeModel.js`. It must live in `casting/castSpookModel.js` (NOT inline in resolver, NOT inline in strike model) to preserve single-purpose module boundaries.
+```
+Replace the casting line in §9 CORE FILES
+```
+- `src/casting/` (castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, fight.js)
+```
+Append to §14 SESSION LOG
+```
+- S-003 (v1.2): Phase 4 casting flow approved with 3-tap hinge model. Added D-011 (target anchored at Tap 1), D-012 (wind locked at Tap 1), H-003 (spook module boundary), and `castSpookModel.js` to §9. Pending refinements A (hinge tier → entry profile) and B (directional spook radiation) await explicit go/no-go before Phase 4 implementation.
+```
+Bump brief_version: 1.1 → 1.2 if you accept the above.
+Gates Before Phase 4 Implementation
+Need explicit answers in one batch:
+**Refinement A (hinge tier → entry profile):** accept / reject / defer?
+**Refinement B (directional spook):** accept / reject / defer?
+**Cancel-cost rule:** does an aborted cast (timeout between taps) consume a turn, half a turn, or zero turns?
+**Cross-POI cast resolution:** clamp at POI boundary (recommended for v0.1) or allow lure to cross into adjacent POI frame?
+**Spook decay rate:** fixed N turns (e.g., 3), or scaled by `splashTier` (LOUD = 4, NORMAL = 2)?
+Once these five are locked, Phase 4 implementation will deliver full files for castPower.js, castTiming.js, castValidator.js, castResolver.js, castSpookModel.js, and fight.js, plus the required Changelog and Implementation Prompts blocks.

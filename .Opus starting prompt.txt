@@ -1,0 +1,87 @@
+Act as the Lead Systems Architect for a new audio-first, headless simulation game called "Accessible Fishing" (AFish). 
+
+Below is the README outlining the core mechanics and gameplay loop. However, before you analyze the game design, you must understand our strict architectural and workflow standards. We utilize a "Watchdog Engine" philosophy to maintain project stability and prevent logic drift during AI-assisted development. 
+
+# 1. Architectural & Workflow Standards
+You must strictly adhere to the following rules when designing the system and providing code:
+
+* **Modular Split Architecture:** Do not design monolithic files. The system must be heavily modularized. State management, grid generation, momentum/navigation logic, and AI opponent logic must be separated into individual, single-purpose JavaScript files.
+* **No Code Truncation:** When generating code updates, you must provide the FULL, unabbreviated file. Never use placeholders like `// ... rest of code here ...` or summarize sections.
+* **Formatting Requirements:** Every response that includes updates must contain distinct sections for a "Changelog" and "Implementation Prompts," and these must be formatted in a way that is easy to copy/paste directly into my workflow.
+* **Headless State:** The game is entirely text/audio-based for blind players. The engine will manage numbers, states, and coordinates without any visual rendering layer.
+* **Legacy Mechanics:** The casting system will adapt a 4-part timing mechanic previously utilized in an accessible golf project (The Pasture). Power distance is set by equipment; the timing mechanic dictates casting accuracy/release.
+
+# 2. Project Overview (The README)
+[PASTE THE ENTIRE ACCESSIBLE FISHING README CONTENT HERE]
+\# Accessible Fishing
+
+
+
+\## Overview
+
+An audio-first, headless fishing simulation game designed with deep strategic mechanics, competitive tournaments, and fully accessible navigation. Built on a robust headless state architecture, the game focuses on strategy, equipment management, and dynamic environments rather than visual reflexes.
+
+
+
+\## Core Mechanics
+
+
+
+\### Environment \& Lake Generation
+
+\* \*\*The Grid:\*\* Lakes are represented as non-rectangular 2D arrays containing `land` and `water` tiles.
+
+\* \*\*Depth \& Structure:\*\* Water tiles feature varied depths, bottom types (mud, rock, gravel), and cover (weeds, submerged timber).
+
+\* \*\*Accessible Spawning:\*\* Lake generation logic ensures that essential environmental traits (e.g., deep drop-offs, rich weed beds) always spawn early and within reachable zones from the starting dock.
+
+
+
+\### Boat Navigation \& Accessibility
+
+\* \*\*Wind \& Drift Momentum:\*\* Wind and currents apply constant vectors to the boat. A momentum mechanic dictates that consecutive turns drifting in the same direction increase speed, requiring active management.
+
+\* \*\*Motor Strategy:\*\* Players balance using loud, high-speed outboards to cross the lake against quiet, battery-draining trolling motors to counter drift and hold over hot spots.
+
+\* \*\*Shallow Water Override (Accessibility):\*\* High-speed outboard motors automatically cut off 3 tiles away from land or obstructions, safely preventing the player from running aground.
+
+
+
+\### Casting \& Reeling
+
+\* \*\*Max-Power Calibration:\*\* Instead of requiring players to time a rapidly moving meter to hit fractional power (e.g., 80%), distance is controlled by equipment setup (rod flexibility, lure weight) and pre-cast settings. 
+
+\* \*\*The 4-Part Cast:\*\* Players focus on timing the perfect 100% release point for a clean, accurate entry.
+
+\* \*\*Invalid Target Warning:\*\* Attempts to cast directly onto land trigger an auditory warning and block the cast.
+
+\* \*\*The Fight:\*\* A tension-based audio mechanic (e.g., reel click pitch) dictates when to reel in and when to let line out to prevent snapping.
+
+
+
+\### Equipment \& Crafting
+
+\* \*\*Fish Finders:\*\* Auditory sonar pings return tones based on depth and secondary chimes for fish detected in the water column.
+
+\* \*\*Lure Crafting \& Decay:\*\* Players can craft lures to hit specific stat blocks (Depth, Vibration, Profile). Crafted lures suffer durability decay from strikes and snags, while live bait perishes over time, adding inventory management.
+
+
+
+\### Tournaments \& AI Competitors
+
+\* \*\*Competitive Play:\*\* The core gameplay loop involves competitive tournament circuits against a leaderboard of simulated anglers.
+
+\* \*\*AI Brain Mode:\*\* Computer-controlled opponents utilize a default "brain mode" guided by a prime directive (e.g., targeting specific structures at different times of day based on shifting conditions).
+
+\* \*\*Notable Opponents:\*\* Players will face off against distinct AI personalities and aggressive top-tier pros, including Bill the Legend.
+
+
+[end of readme.md]
+
+# 3. Your Task
+Review the architectural standards and the game design overview. 
+1. Provide a critical evaluation of the system requirements. Where do you see potential bottlenecks in managing a grid-based momentum system combined with AI competitor logic?
+2. Propose a specific file structure (the "modular split") for the initial JavaScript engine. 
+3. Outline a step-by-step development roadmap, starting with the headless environment state and grid navigation. 
+
+Do not write the actual game code yet. Acknowledge these rules and provide your architectural analysis and roadmap.
