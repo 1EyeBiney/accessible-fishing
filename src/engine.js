@@ -285,7 +285,9 @@ async function boot(opts = {}) {
   // modeRouter BEFORE the first transitionTo() call so their onMount()
   // callbacks fire correctly when FOCUS_TRAP is entered below.
   // registerUiManifests() is idempotent — safe to call more than once.
-  registerUiManifests(); ─────────────────────────────────────
+  registerUiManifests();
+
+  // ── Step 5: Transition to FOCUS_TRAP (D-023) ──────────────────────────────
   // D-023: First user-facing mode after BOOT is FOCUS_TRAP, which holds
   // screen-reader focus until the player issues a confirmed input.
   // transitionTo() from BOOT → FOCUS_TRAP:
