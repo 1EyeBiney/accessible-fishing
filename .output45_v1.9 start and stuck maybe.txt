@@ -1,0 +1,59 @@
+Semantic workspace search is not currently available
+Thinking: Let me read the existing engine.js file if it exists, and also check the relevant source files to understand the contracts before writing.
+Searched for files matching **/src/engine.js, 1 match. Files: c:\nbs\afish\src\engine.js
+Searched for text FOCUS_TRAP|HUB|MODES|transitionTo|currentMode|registerMountManifest (**/src/core/modeRouter.js), 20 results. Files: c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js
+Read engine.js, lines 1 to 60
+Read modeRouter.js, lines 1 to 120
+Read engine.js, lines 60 to 150
+Read inputAdapter.js, lines 1 to 100
+Read inputAdapter.js, lines 100 to 250
+Read engine.js, lines 150 to 200
+Read engine.js, lines 200 to 203
+Good. Now I have everything. The existing
+engine.js (/c:/nbs/afish/src/engine.js)
+already has the boot sequence through Phase 8 stub. The Phase 9 task is to replace that TODO stub with the real
+audioEngine.init() (c:\nbs\afish\src\audio\audioEngine.js:147)
+call and add the CLI keyboard hijack for terminal play. Let me also check what the FOCUS_TRAP mode does and what the starting mode should be per D-023.
+Searched for text FOCUS_TRAP|D-023 (**/src/core/modeRouter.js), 3 results. Files: c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js
+Searched for text keyDown|keyUp|tap|releaseAll|lock|unlock (**/src/core/inputAdapter.js), 10 results. Files: c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js
+Searched for text export (**/src/core/inputAdapter.js), 1 result. Files: c:\nbs\afish\src\core\inputAdapter.js
+Read inputAdapter.js, lines 351 to 361
+I have everything I need. Now I'll write the updated
+engine.js (/c:/nbs/afish/src/engine.js)
+:
+Replacing 41 lines with 66 lines in engine.js
+```
+```
+```
+```
+Replacing 18 lines with 162 lines in engine.js
+```
+```
+```
+```
+Now replace the boot() function body to wire in the audio engine and CLI adapter:
+Replacing 47 lines with 63 lines in engine.js
+```
+```
+```
+```
+Now add the ignition switch at the bottom — the main() entrypoint that fires when the file is run directly:
+Read engine.js, lines 1 to 10
+Read engine.js, lines 270 to 310
+Read engine.js, lines 340 to 388
+Replacing 5 lines with 48 lines in engine.js
+```
+```
+```
+```
+The await import(...) inside a regular const initialiser is awkward. Let me fix the ignition switch to be clean:
+Replacing 23 lines with 30 lines in engine.js
+```
+```
+```
+```
+Now verify the file is syntactically clean and the existing harness still passes:
+Running node --input-type=module --eval &quot;import &#39;./src/engine.js&#39;&quot; 2&gt;&amp;1; echo &quot;exit $.... node --input-type=module --eval "import './src/engine.js'" 2>&1; echo "exit $LASTEXITCODE"
+Run `pwsh` command?: node --input-type=module --eval "import './src/engine.js'" 2>&1
+Explanation: Capture error output from engine.js import attempt.
+Goal: See import error details
