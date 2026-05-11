@@ -376,7 +376,11 @@ function _buildFinderGraph() {
  * pre-built fight graph. Idempotent — no-op if already active.
  */
 function _startFightVoice() {
-  if (!_IS_BROWSER || !_actx || !_fightGraph || _fightActive) return;
+  // Guard: _fightSineOsc is null only when oscillators are not yet running.
+  // We no longer use _fightActive here because that flag is set by the caller
+  // (the FIGHT_TENSION bus handler) BEFORE this function is invoked, in order
+  // to maintain routing state in headless Node.js environments.
+  if (!_IS_BROWSER || !_actx || !_fightGraph || _fightSineOsc !== null) return;
 
   const g   = _fightGraph;
   const now = _actx.currentTime;
@@ -1250,11 +1254,14 @@ function _registerBusListeners() {
   _unsubs.push(bus.on('FIGHT_TENSION', (evt) => {
     // evt: { tension, trend, atMs, rampToMs }  (D-035)
     const tension = evt?.tension ?? 0;
+    // _fightActive is routing state — updated in BOTH browser and Node.js so the
+    // INPUT_* mutex ("suppress move blip during fight") works in headless tests.
+    if (!_fightActive) _fightActive = true;
     if (!_IS_BROWSER || !_actx) {
       _logAudio('combat', 'tension', { t: tension.toFixed(3), trend: evt?.trend });
       return;
     }
-    if (!_fightActive) _startFightVoice();
+    _startFightVoice(); // idempotent once _fightActive guarded internally
     _updateFightVoice(tension);
   }));
 
@@ -1282,6 +1289,8 @@ function _registerBusListeners() {
   // ── Fight Resolved — stop tension voice, play outcome sound ──────────────
   _unsubs.push(bus.on('FIGHT_RESOLVED', (evt) => {
     const outcome = evt?.outcome ?? '';
+    // Clear routing flag in both environments so INPUT_* blips resume after a fight.
+    _fightActive = false;
     if (!_IS_BROWSER || !_actx) { _logAudio('combat', 'resolved', { outcome }); return; }
 
     // Always stop the continuous tension voice before the outcome sound.
