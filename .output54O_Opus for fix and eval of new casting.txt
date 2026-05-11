@@ -1,0 +1,128 @@
+Searched codebase for "SYSTEM OVERRIDE / ARCHITECTURAL AUDIT REQUIRED
+Opus, as the Master Architect of the project_brief.md (v1.13), I need you to audit the recent implementation steps from Phase 10 and 11. I am concerned the implementation is drifting from the design document.
+1. The Implementation State (Phases 10 & 11)
+We have successfully bridged the headless engine to the browser.
+`src/browserAdapter.js` handles the DOM, Web Audio API arming, and translates keystrokes to the `eventBus` (e.g., `INPUT_SPACEBAR`).
+`src/ui/tournamentActive.js` was built as a pure "announcer" manifest. It listens to the bus and triggers `UI_ANNOUNCE` for screen readers. It contains zero game logic.
+`src/engine.js` was updated to statically import the core gameplay modules (`targetSelector.js`, `castPipeline.js`, `fishBehavior.js`, `fishFinder.js`) so they load in the browser.
+2. The Unsolved Bug: The Dead Sonar
+In an attempt to allow the player to ping the sonar, we updated src/equipment/fishFinder.js. We added a registerMountManifest block for MODES.TOURNAMENT_ACTIVE, and in onMount, we subscribed directly to INPUT_ENTER to call the internal scan() function. 
+The Bug: When the player is in the boat, pressing Enter does absolutely nothing. No scan fires. Arrow keys and Spacebar produce audio feedback, but Enter is dead.
+Your Task: Architecturally, why is the Enter key failing to reach the Fish Finder? Is there a missing link in browserAdapter.js, inputAdapter.js, or the way the manifest was registered?
+3. The Proposed Casting FSM (The Accessible Golf Pivot)
+To make the 5-tap cast rhythm manageable, we are proposing an "Accessible Golf" style FSM for src/casting/castPipeline.js:
+**Phase 1:** `Arrow Up` starts a fixed-duration metronome. The player can optionally tap `Spacebar` to log `windTime1`.
+**Phase 2 (Accuracy):** Metronome stops, rising pitch starts. `Arrow Up` locks the Accuracy (Scatter Circle size) and instantly starts Phase 3.
+**Phase 3:** Metronome resumes for a fixed duration. The player optionally taps `Spacebar` to log `windTime2`. (Comparing `windTime1` to `windTime2` determines wind mitigation).
+**Phase 4 (Impact):** Metronome stops, falling pitch starts. `Arrow Down` locks the splash noise and triggers `CAST_LANDED`.
+**Your Task:** Does this FSM violate any invariants or decisions in v1.13 of the project brief? Is this the optimal way to map D-014 (Wind Rhythm) into the headless engine?
+Review these items against the project brief and provide your architectural ruling. Do not write the code patches yet; just provide the diagnosis.", 23 results. Files: c:\nbs\afish\.changelog.md, c:\nbs\afish\.changelog.md, c:\nbs\afish\.changelog.md, c:\nbs\afish\.output49_phase 11 going now.txt, c:\nbs\afish\.output49_phase 11 going now.txt, c:\nbs\afish\.output52 fixes for not loaded modules.txt, c:\nbs\afish\.output52 fixes for not loaded modules.txt, c:\nbs\afish\.output52 fixes for not loaded modules.txt, c:\nbs\afish\index.html, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\browserAdapter.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\ui\focusTrap.js, c:\nbs\afish\tests\harness-fish.js, c:\nbs\afish\tests\harness.js
+Thinking: I need to start by reviewing the project brief and examining the relevant files to understand the architecture and identify any issues.
+Read project_brief.md
+Read inputAdapter.js
+Read fishFinder.js, lines 1 to 400
+Read browserAdapter.js
+Thinking: I'm scanning through the rest of the fishFinder code to locate the registerMountManifest block.
+Read fishFinder.js, lines 400 to 462
+Read tournamentActive.js, lines 1 to 200
+Read engine.js, lines 1 to 200
+Read modeRouter.js
+Thinking: I need to trace through the event handling in tournamentActive.js to see if targetSelector is also listening for INPUT_ENTER, which could be creating a conflict with fishFinder's direct subscription to that same input event. Looking at targetSelector.js to confirm whether it also listens for INPUT_ENTER events, since both it and fishFinder would be mounted simultaneously in TOURNAMENT_ACTIVE mode.
+Searched for regex INPUT_ENTER|registerMountManifest|bus\.on (**/src/casting/targetSelector.js), 5 results. Files: c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js
+Searched for regex INPUT_ENTER (**/src/**/*.js), 13 results. Files: c:\nbs\afish\src\ui\focusTrap.js, c:\nbs\afish\src\ui\focusTrap.js, c:\nbs\afish\src\ui\focusTrap.js, c:\nbs\afish\src\ui\hub.js, c:\nbs\afish\src\ui\hub.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\ui\tournamentBriefing.js, c:\nbs\afish\src\ui\tournamentBriefing.js, c:\nbs\afish\src\ui\tournamentResults.js, c:\nbs\afish\src\ui\tournamentResults.js
+Read targetSelector.js, lines 1 to 100
+Read eventBus.js, lines 1 to 120
+Thinking: I've got what I need to work through both issues now. The dead sonar bug is coming from how the `INPUT_ENTER` event works — it's a TAP event that only fires when the key is held for less than 150ms, and I'm tracing through the inputAdapter to see how keyUp events trigger the tap emission based on the held duration threshold.
+Looking at the browserAdapter, keydown calls into inputAdapter and keyup should produce the UP event plus the tap if released quickly, so that flow seems right. But the user confirmed arrow keys and spacebar work while Enter doesn't, so something's different about Enter specifically. I'm wondering if it's a focus issue — after clicking Start, focus moves to the heading which might not properly intercept Enter, or maybe there's something about how the browser handles Enter key repeat that's interfering. Actually, I should check whether the fishFinder mode even has the right manifest mounted to handle this state in the first place.
+Wait, I'm realizing the real problem might be deeper. Even if the INPUT_ENTER event fires correctly, the scan function checks `state.tournament?.scanLocked` and `state.session?.player?.currentPoiId`. If either of those conditions blocks the scan, it returns silently without emitting any bus event — there's no feedback at all. And currentPoiId is probably undefined unless something else in the system has already set it, which would explain why Enter produces no audio and no visible response.
+But there's also an architectural issue here: fishFinder shouldn't be subscribing directly to INPUT_ENTER in the first place. That's input-to-action mapping, which should live in a dedicated control layer, not buried in the fishFinder module itself. The brief doesn't clearly specify where this control layer should be — ui/tournamentActive.js is just the announcer for UI output, not input handling. So either the architecture is missing a piece, or fishFinder is doing something it shouldn't be doing. the most critical issue is that `scan()` fails silently when `currentPoiId` isn't set, so even if the input wiring were correct, nothing would happen. There's also a potential listener ordering problem if focusTrap and tournament_active mount/unmount at the wrong time. Now I'm sketching out an FSM proposal that compares the casting mechanic to the locked golf swing pattern — the idea is to use Arrow Up to trigger a metronome (replacing the "Backswing" concept) with an optional Spacebar for wind timing, similar to how D-014 structures its five-tap sequence.
+But this proposal breaks D-014 in several ways. D-014 mandates exactly five distinct taps in a locked chain, with Spacebar taps being required to open and close the wind mitigation timer. Making Spacebar optional collapses the orthogonality between Scatter and Mitigation — if wind timing is skipped, mitigation has no defined value and can't remain independent from Scatter. The whiff/timeout punishment system in D-015 also depends on inter-tap timing for all five taps, so removing mandatory Spacebar taps changes which inputs can whiff and breaks the punishment surface. And D-014 specifies that Tap 5 must be an Arrow for Splashdown, which the proposal seems to violate.
+The audio feedback layer — metronome ticks with rising and falling pitch — needs to be decoupled from the cast pipeline itself. The engine should emit structured bus events like "METRONOME_TICK" and let the audio system subscribe to those, rather than coupling timing directly. The wind mitigation math also assumes both windTime1 and windTime2 are mandatory; if Spacebar becomes optional, the calculation breaks or needs a default penalty. Finally, the fixed-duration metronome is good for accessibility, but it's a new design constant that needs to be formally locked in the spec.
+The core issue is whether Spacebar taps are truly optional or penalized when skipped — if they're optional as proposed, that violates D-014's 5-tap requirement and breaks the orthogonal Mitigation axis. The spec needs to either amend D-014 to allow optional taps or redefine the proposal so Spacebar is mandatory.
+Architectural Ruling — v1.13 Audit
+Item 1: The Dead Sonar (Diagnosis)
+The problem is not in
+browserAdapter.js (/c:/nbs/afish/src/browserAdapter.js)
+or
+inputAdapter.js (/c:/nbs/afish/src/core/inputAdapter.js)
+. The Enter key reaches
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+correctly. Verified:
+-
+browserAdapter.js (/c:/nbs/afish/src/browserAdapter.js)
+maps
+event.code === 'Enter' (c:\nbs\afish\src\browserAdapter.js:118)
+→
+inputAdapter.keyDown('ENTER', …) (c:\nbs\afish\src\core\inputAdapter.js:35)
+/
+keyUp(...) (c:\nbs\afish\src\core\inputAdapter.js:162)
+symmetrically with the other arrow/space mappings, which you confirmed work.
+inputAdapter.keyUp() (c:\nbs\afish\src\core\inputAdapter.js:162)
+emits the INPUT_ENTER tap event (per D-029) whenever held < 150 ms, identically to INPUT_SPACEBAR.
+`fishFinder`'s mount manifest does install
+bus.on('INPUT_ENTER', scan) (c:\nbs\afish\src\core\eventBus.js:21)
+on enter‑TOURNAMENT_ACTIVE, and
+modeRouter (c:\nbs\afish\src\core\modeRouter.js:36)
+mounts it after the MODE_CHANGED emit (so it’s alive by the time you press anything).
+**The bug is inside
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+itself — it is a silent early-return.** Two guards swallow the call without emitting anything to the bus:
+1.
+if (state.tournament?.scanLocked) (c:\nbs\afish\src\casting\targetSelector.js:249)
+→ returns
+{ blocked: true, reason: 'SCAN_LOCKED' } (c:\nbs\afish\src\equipment\fishFinder.js:145)
+with no bus event.
+2.
+if (!poiId) (c:\nbs\afish\src\casting\targetSelector.js:150)
+where
+poiId = state.session?.player?.currentPoiId (c:\nbs\afish\src\casting\targetSelector.js:140)
+→ returns
+{ blocked: true, reason: 'NO_ACTIVE_POI' } (c:\nbs\afish\src\equipment\fishFinder.js:145)
+with no bus event.
+The latter is almost certainly your culprit: nothing in the Phase 10/11 wiring writes
+state.session.player.currentPoiId (c:\nbs\afish\src\equipment\fishFinder.js:148)
+. Arrows/Space seem to "work" only because the browser/audio adapter produces keystroke feedback that is independent of gameplay — targetSelector actually ignores Arrow Up/Down too until
+_menuOpen === true (c:\nbs\afish\src\casting\targetSelector.js:90)
+, which only happens after a successful FISH_FINDER_RESULTS emit. So Enter is no more dead than the other keys; they’re all hitting silently-aborting gameplay handlers. Enter is just the most visible because you expected an audible scan-start cue.
+Diagnostic fix path: make
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+emit a
+FISH_FINDER_BLOCKED { reason } (c:\nbs\afish\src\casting\targetSelector.js:175)
+event on every early-return so the announcer can surface it, and seed
+state.session.player.currentPoiId (c:\nbs\afish\src\equipment\fishFinder.js:148)
+at TOURNAMENT_ACTIVE entry (responsibility of
+tournament.js (c:\nbs\afish\src\casting\targetSelector.js:249)
+per §9, not fishFinder).
+Drift concern (separate from the bug)
+fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+'s §9 Public API Contract is
+scan() / cancel(); emits FISH_FINDER_RESULTS (c:\nbs\afish\src\equipment\fishFinder.js:147)
+. Subscribing to `INPUT_ENTER` inside `fishFinder` is contract drift — it gives the equipment module a control-binding responsibility it was never granted, and creates a hidden coupling between "Enter" semantics and one piece of equipment. The brief deliberately leaves the input→gameplay-action mapping unassigned in v1.13 because ui/tournamentActive.js was declared pure-announcer. That's the real gap: there is no declared owner for "what does Enter mean during TOURNAMENT_ACTIVE." Recommend either expanding
+tournamentActive.js (/c:/nbs/afish/src/ui/tournamentActive.js)
+from announcer to control-surface (and renaming accordingly), or amending §9 to add a tournamentActiveInput.js-style binding file. Resolving this needs a brief amendment; do not bury it inside fishFinder long-term.
+Item 2: Accessible Golf Casting FSM (Ruling)
+The proposal partially violates D-014 (LOCKED) and cannot be merged as written. Specifics:
+Issue D-014 (locked) Proposal Verdict
+Total taps Exactly 5 mandatory taps Taps 2 and 4 are optional Violation. D-014 says Tap 2 Spacebar opens the Wind Mitigation timer and Tap 4 Spacebar closes it. Optional spacebars collapse the Mitigation axis — it has no defined value when skipped, breaking D-014's "Scatter and Mitigation are orthogonal quality axes."
+Mitigation math mitigation = match(Tap1→Tap3 duration vs Tap2→Tap4 duration), perfect = 80% wind reduction "Comparing windTime1 to windTime2 determines wind mitigation" — but both are optional Undefined. If either is absent, the formula has no second operand. Must define a "no-mitigation default" penalty (likely 0% reduction) or make spacebars mandatory.
+Whiff / Bird's Nest (D-015) Inter-tap timeout = lockout Fixed-duration metronome between phases Partial conflict. Fixed metronome means there is no "inter-tap timeout" to violate on the spacebar; whiffs only apply to the Arrow taps. The brief mandates whiff applies to every inter-tap interval. Either re-introduce a window around the optional spacebars, or amend D-015 to scope whiff to mandatory taps only.
+Apex / Scatter (Tap 3) Tap 3 sets Scatter Circle radius Phase 2 "Arrow Up locks Accuracy" Consistent. ✓
+Splashdown (Tap 5) "Tap 5 Arrow ... SILENT/NORMAL/LOUD" — arrow unspecified "Arrow Down locks splash" Consistent (D-014 leaves direction open). ✓
+Audio coupling D-021: engine never calls audio "Rising pitch / falling pitch / metronome" described as part of FSM Acceptable only if the pitch/metronome cues are emitted as structured bus events (e.g. CAST_PHASE_CHANGED, CAST_METRONOME_TICK) and audio/synthGraph.js is the sole consumer. Don't let castPipeline import any audio surface.
+Accessibility floor D-050 fixes a 300 ms hookset floor; no equivalent declared for cast phases Fixed-duration metronome is good for a11y but is a new constant Needs amendment. Add a locked CAST_PHASE_MIN_MS constant analogous to D-050.
+Is this the optimal D-014 mapping?
+The spirit of the proposal (anchor everything to a metronome the player can ride, rather than free-form timing) is strongly aligned with the project's accessibility-first ethos and is, in my view, the correct direction for a headless engine. But the implementation as described mutates a LOCKED decision (D-014) without going through the amendment process required by §0:
+*"On conflict with §6 DECISIONS: pause, surface decision, require explicit reopen."*
+Required action before any code:
+Formally reopen **D-014** with an amendment proposal — e.g. "D-014 Revision: 5 taps remain mandatory; Spacebar timing on Taps 2/4 is anchored to a metronome rather than free-rhythm; missing a spacebar tap yields 0% mitigation but does not Bird's Nest the cast."
+Add a new decision for `CAST_PHASE_MIN_MS` (accessibility floor) analogous to D-050.
+Confirm in **D-015** whether whiffs still apply to spacebar taps under the metronome model.
+Declare in the amended decision that all metronome / pitch cues are bus-emitted events consumed by `audio/synthGraph.js` (preserves D-021 / H-009).
+Until those amendments are recorded in §6 with version bump, the FSM as proposed should be considered blocked.
+Summary
+**Dead sonar:** runtime bug inside
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+(silent early-returns + unseeded
+state.session.player.currentPoiId (c:\nbs\afish\src\equipment\fishFinder.js:148)
+), plus architectural drift in fishFinder taking on input binding it doesn't own per §9.
+**Casting FSM:** good direction, but mutates locked D-014/D-015 — requires explicit decision reopen and amendments before implementation.
