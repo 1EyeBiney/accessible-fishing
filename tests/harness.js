@@ -53,6 +53,12 @@ import * as motor      from '../src/navigation/motor.js';
 import * as navigation from '../src/navigation/navigation.js';
 
 // ---------------------------------------------------------------------------
+// Phase 4 — equipment
+// ---------------------------------------------------------------------------
+import * as equipment   from '../src/equipment/equipment.js';
+import * as fishFinder  from '../src/equipment/fishFinder.js';
+
+// ---------------------------------------------------------------------------
 // Harness bookkeeping
 // ---------------------------------------------------------------------------
 
@@ -1042,6 +1048,301 @@ assertEqual(shallowResult.reason, 'SHALLOW_OVERRIDE',
   '6j. D-007: reason is SHALLOW_OVERRIDE (bass boat 0.70m draft, tile minM=0.35m)');
 
 // ===========================================================================
+// SECTION 7: Equipment & Loadout Constraints (H-017 / D-067)
+// ===========================================================================
+section('EQUIPMENT & LOADOUT CONSTRAINTS (H-017 / D-067)');
+resetAll();
+
+// ── 7a. Catalog reads return frozen objects with correct schemas ─────────────
+const rod7a = equipment.getRod('ROD_MEDIUM_SPINNING');
+assert(rod7a !== null && typeof rod7a === 'object',
+  '7a. getRod returns an object');
+assertEqual(rod7a.power, 'M',
+  '7a. ROD_MEDIUM_SPINNING power is M');
+assertEqual(rod7a.tier, 2,
+  '7a. ROD_MEDIUM_SPINNING tier is 2');
+assert(Object.isFrozen(rod7a),
+  '7a. rod catalog entry is frozen');
+
+const lure7a = equipment.getLure('LURE_SHALLOW_CRANK');
+assertEqual(lure7a.category, 'CRANKBAIT',
+  '7a. LURE_SHALLOW_CRANK category is CRANKBAIT');
+assert(Object.isFrozen(lure7a),
+  '7a. lure catalog entry is frozen');
+
+const bait7a = equipment.getBait('LURE_NIGHTCRAWLER');
+assertEqual(bait7a.vigorLossPerCast, 10,
+  '7a. LURE_NIGHTCRAWLER vigorLossPerCast is 10');
+
+assertThrows(
+  () => equipment.getRod('ROD_UNKNOWN'),
+  'unknown rod',
+  '7a. getRod throws for unknown rod id',
+);
+assertThrows(
+  () => equipment.getLure('LURE_UNKNOWN'),
+  'unknown lure',
+  '7a. getLure throws for unknown lure id',
+);
+assertThrows(
+  () => equipment.getBait('BAIT_UNKNOWN'),
+  'unknown bait',
+  '7a. getBait throws for unknown bait id',
+);
+
+// ── 7b. Set active boat and populate hub.inventory ─────────────────────────
+// ROWBOAT: maxRods=2, maxLures=5
+stateStore.dispatch({ type: 'HUB_ACTIVE_BOAT_SET', payload: { boatId: 'ROWBOAT' } });
+
+stateStore.dispatch({ type: 'INVENTORY_ITEM_ACQUIRED', payload: { itemType: 'rod',  itemId: 'ROD_MEDIUM_SPINNING' } });
+stateStore.dispatch({ type: 'INVENTORY_ITEM_ACQUIRED', payload: { itemType: 'rod',  itemId: 'ROD_MH_CASTING'     } });
+stateStore.dispatch({ type: 'INVENTORY_ITEM_ACQUIRED', payload: { itemType: 'rod',  itemId: 'ROD_LIGHT_SPINNING'  } });
+stateStore.dispatch({ type: 'INVENTORY_ITEM_ACQUIRED', payload: { itemType: 'lure', itemId: 'LURE_SHALLOW_CRANK'  } });
+stateStore.dispatch({ type: 'INVENTORY_ITEM_ACQUIRED', payload: { itemType: 'bait', itemId: 'LURE_NIGHTCRAWLER'   } });
+
+const inv7b = stateStore.getState().hub.inventory;
+assertEqual(inv7b.rods.length,  3, '7b. inventory.rods has 3 items after acquisition');
+assertEqual(inv7b.lures.length, 1, '7b. inventory.lures has 1 item after acquisition');
+assertEqual(inv7b.bait.length,  1, '7b. inventory.bait has 1 item after acquisition');
+
+// ── 7c. addToLoadout populates hub.activeTackle ────────────────────────────
+equipment.addToLoadout('rods',  'ROD_MEDIUM_SPINNING');
+equipment.addToLoadout('lures', 'LURE_SHALLOW_CRANK');
+equipment.addToLoadout('bait',  'LURE_NIGHTCRAWLER');
+
+const tackle7c = equipment.getActiveTackle();
+assert(tackle7c !== null,                                '7c. getActiveTackle returns non-null in HUB mode');
+assertEqual(tackle7c.rods.length,  1,                   '7c. activeTackle.rods has 1 item');
+assertEqual(tackle7c.lures.length, 1,                   '7c. activeTackle.lures has 1 item');
+assertEqual(tackle7c.bait.length,  1,                   '7c. activeTackle.bait has 1 item');
+assertEqual(tackle7c.rods[0].id, 'ROD_MEDIUM_SPINNING', '7c. first rod in activeTackle is ROD_MEDIUM_SPINNING');
+
+// ── 7d. validateLoadout within ROWBOAT cap (1 rod, 1 lure → valid) ─────────
+const vld7d = equipment.validateLoadout();
+assertEqual(vld7d.valid,    true,  '7d. validateLoadout valid=true when within cap');
+assertEqual(vld7d.overRods,  0,    '7d. validateLoadout overRods=0');
+assertEqual(vld7d.overLures, 0,    '7d. validateLoadout overLures=0');
+assertEqual(vld7d.empty,    false, '7d. validateLoadout empty=false when tackle present');
+
+// ── 7e. Over-cap detection: ROWBOAT maxRods=2, adding 3rd rod → invalid ─────
+equipment.addToLoadout('rods', 'ROD_MH_CASTING');    // 2nd rod — at cap
+const vld7e1 = equipment.validateLoadout();
+assertEqual(vld7e1.valid, true, '7e. validateLoadout valid=true at exactly maxRods (2)');
+
+equipment.addToLoadout('rods', 'ROD_LIGHT_SPINNING'); // 3rd rod — over cap
+const vld7e2 = equipment.validateLoadout();
+assertEqual(vld7e2.valid,    false, '7e. validateLoadout valid=false when rods > maxRods');
+assertEqual(vld7e2.overRods, 1,     '7e. validateLoadout overRods=1 with 3 rods on ROWBOAT');
+
+// ── 7f. Trim to valid loadout, then enter tournament ──────────────────────
+equipment.removeFromLoadout('rods', 'ROD_LIGHT_SPINNING');
+const vld7f = equipment.validateLoadout();
+assertEqual(vld7f.valid, true, '7f. validateLoadout valid=true after trimming to 2 rods');
+
+// TOURNAMENT_ENTERED deep-copies hub.activeTackle → tournament.activeTackle (H-017)
+stateStore.dispatch({ type: 'TOURNAMENT_ENTERED', payload: { id: 'T-HARNESS-7', spec: {} } });
+stateStore.dispatch({ type: 'MODE_CHANGED',       payload: { mode: 'TOURNAMENT_ACTIVE' } });
+
+assertEqual(stateStore.getState().mode, 'TOURNAMENT_ACTIVE',
+  '7f. state.mode is TOURNAMENT_ACTIVE after MODE_CHANGED');
+
+const ta7f = stateStore.getState().tournament.activeTackle;
+assert(ta7f !== null,         '7f. tournament.activeTackle is set after TOURNAMENT_ENTERED');
+assertEqual(ta7f.rods.length, 2, '7f. tournament.activeTackle has 2 rods (copied from hub)');
+
+// ── 7g. H-017 Set-Membership Lock: add/remove throw in TOURNAMENT_ACTIVE ───
+assertThrows(
+  () => equipment.addToLoadout('rods', 'ROD_MEDIUM_SPINNING'),
+  'H-017',
+  '7g. addToLoadout throws H-017 violation in TOURNAMENT_ACTIVE',
+);
+assertThrows(
+  () => equipment.removeFromLoadout('rods', 'ROD_MEDIUM_SPINNING'),
+  'H-017',
+  '7g. removeFromLoadout throws H-017 violation in TOURNAMENT_ACTIVE',
+);
+
+// ── 7h. H-017 Condition Mutation: damageItem (rod durability) is always writable
+const rodBefore7h = stateStore.getState().tournament.activeTackle.rods
+  .find(r => r.id === 'ROD_MEDIUM_SPINNING');
+assertEqual(rodBefore7h.durability, 1.0,
+  '7h. ROD_MEDIUM_SPINNING durability starts at 1.0 in tournament partition');
+
+equipment.damageItem('ROD_MEDIUM_SPINNING', 'cast'); // must NOT throw
+
+const rodAfter7h = stateStore.getState().tournament.activeTackle.rods
+  .find(r => r.id === 'ROD_MEDIUM_SPINNING');
+assert(rodAfter7h.durability < 1.0,
+  `7h. durability decreased after damageItem(cast)  (now: ${rodAfter7h.durability})`);
+
+// ── 7i. H-017 Condition Mutation: damageItem (bait vigor) is always writable
+const baitBefore7i = stateStore.getState().tournament.activeTackle.bait
+  .find(b => b.id === 'LURE_NIGHTCRAWLER');
+assertEqual(baitBefore7i.vigor, 100,
+  '7i. LURE_NIGHTCRAWLER vigor starts at 100 in tournament partition');
+
+equipment.damageItem('LURE_NIGHTCRAWLER', 'cast'); // must NOT throw
+
+const baitAfter7i = stateStore.getState().tournament.activeTackle.bait
+  .find(b => b.id === 'LURE_NIGHTCRAWLER');
+assertEqual(baitAfter7i.vigor, 90,
+  '7i. LURE_NIGHTCRAWLER vigor is 90 after one cast (vigorLossPerCast=10)');
+
+// ===========================================================================
+// SECTION 8: Fish Finder Logic (D-041 / D-042 / D-043)
+// ===========================================================================
+section('FISH FINDER LOGIC (D-041 / D-042 / D-043)');
+resetAll();
+
+// ── World setup for Section 8 ───────────────────────────────────────────────
+// Two tiles assigned to POI_LAKE_A; rebuild structureIndex so candidatesForPoi works.
+const POI8_ID = 'POI_LAKE_A';
+
+worldMap.registerTile({
+  id:    'T_LAKE_WEEDBED',
+  coord: { x: 100, y: 200 },
+  traits: {
+    depth:  { bottomM: 1.5, minM: 1.0, maxM: 2.0, slopeDeg: 5 },
+    bottom: { primary: 'MUD', secondary: null, hardness: 0.2 },
+    cover:  { type: 'WEEDBED', density: 0.7, canopyDepthM: 0.5, snagRisk: 0.4, shadeFactor: 0.3 },
+    tags:   ['WEEDBED_INNER'],
+    reach:  { fromDockMin: 5, draftClass: 'SHALLOW' },
+  },
+});
+worldMap.registerTile({
+  id:    'T_LAKE_OPEN',
+  coord: { x: 101, y: 200 },
+  traits: {
+    depth:  { bottomM: 3.0, minM: 2.5, maxM: 3.5, slopeDeg: 3 },
+    bottom: { primary: 'SAND', secondary: null, hardness: 0.5 },
+    cover:  { type: 'NONE', density: 0, canopyDepthM: 0, snagRisk: 0, shadeFactor: 0 },
+    tags:   ['OPEN_FLAT'],
+    reach:  { fromDockMin: 5, draftClass: 'DEEP' },
+  },
+});
+worldMap.registerPoiZone(POI8_ID, ['100,200', '101,200']);
+
+poiGraph.registerPoi({
+  id:          POI8_ID,
+  label:       'Lake Alpha',
+  centerCoord: { x: 100, y: 200 },
+  frameRadius: 5,
+  draftClass:  'SHALLOW',
+});
+
+const rebuild8 = structureIndex.rebuild();
+assertEqual(rebuild8.built, 1, '8-setup. structureIndex rebuilt 1 POI (POI_LAKE_A)');
+
+const candidates8setup = structureIndex.candidatesForPoi(POI8_ID);
+assert(candidates8setup.length > 0, '8-setup. candidatesForPoi returns at least 1 candidate');
+
+// ── 8a. D-043: scan returns blocked when tournament.scanLocked is true ──────
+stateStore.dispatch({ type: 'SCAN_LOCKED' }); // sets tournament.scanLocked = true
+const scanBlocked = fishFinder.scan();
+assertEqual(scanBlocked.blocked, true,
+  '8a. scan() returns { blocked: true } when scanLocked');
+assertEqual(scanBlocked.reason, 'SCAN_LOCKED',
+  '8a. scan() reason is SCAN_LOCKED');
+
+// ── 8b. D-042 + D-043: unlock, set POI and boat; scan() proceeds ────────────
+stateStore.dispatch({ type: 'SCAN_UNLOCKED' }); // tournament.scanLocked = false
+stateStore.dispatch({ type: 'HUB_ACTIVE_BOAT_SET', payload: { boatId: 'BASS_BOAT' } });
+// Set current POI so scan() reads a valid poiId
+stateStore.dispatch({ type: 'PLAYER_ARRIVED_AT_POI', payload: { poiId: POI8_ID } });
+
+const scanResult8b = fishFinder.scan();
+assertEqual(scanResult8b.blocked, false,
+  '8b. scan() returns { blocked: false } when unlocked with valid POI and boat');
+assertEqual(scanResult8b.tier, 'BASIC',
+  '8b. scan() tier is BASIC for BASS_BOAT (finderTier=BASIC)');
+assertEqual(scanResult8b.scanDurationMs, 6000,
+  '8b. scan() scanDurationMs is 6000ms for BASIC tier');
+
+// cancel the pending scan so we can test SCANNING event cleanly
+fishFinder.cancel();
+
+// ── 8c. FISH_FINDER_SCANNING event emitted when scan starts ─────────────────
+let scanningEvt = null;
+const unsubScanning = bus.on('FISH_FINDER_SCANNING', evt => { scanningEvt = evt; });
+fishFinder.scan();
+unsubScanning();
+
+assert(scanningEvt !== null,
+  '8c. FISH_FINDER_SCANNING event was emitted');
+assertEqual(scanningEvt.tier, 'BASIC',
+  '8c. FISH_FINDER_SCANNING event.tier is BASIC');
+assertEqual(scanningEvt.scanDurationMs, 6000,
+  '8c. FISH_FINDER_SCANNING event.scanDurationMs is 6000');
+assertEqual(scanningEvt.poiId, POI8_ID,
+  '8c. FISH_FINDER_SCANNING event.poiId matches current POI');
+
+// ── 8d. D-041: tick(6000) fires the schedule callback → FISH_FINDER_RESULTS ─
+let resultsEvt = null;
+const unsubResults = bus.on('FISH_FINDER_RESULTS', evt => { resultsEvt = evt; });
+clock.tick(6000);
+unsubResults();
+
+assert(resultsEvt !== null,
+  '8d. FISH_FINDER_RESULTS event was emitted after clock.tick(6000)');
+assertEqual(resultsEvt.tier, 'BASIC',
+  '8d. FISH_FINDER_RESULTS event.tier is BASIC');
+assertEqual(resultsEvt.poiId, POI8_ID,
+  '8d. FISH_FINDER_RESULTS event.poiId matches scanned POI');
+
+// ── 8e. Candidate cap and array structure ────────────────────────────────────
+assert(Array.isArray(resultsEvt.candidates),
+  '8e. FISH_FINDER_RESULTS.candidates is an array');
+assert(resultsEvt.candidates.length <= 4,
+  `8e. BASIC tier candidate count ≤ 4  (got: ${resultsEvt.candidates.length})`);
+assert(resultsEvt.candidates.length > 0,
+  `8e. candidates array is non-empty (world has ${candidates8setup.length} tiles in POI)`);
+
+// ── 8f. D-042 BASIC tier field set: offset + label + coverType present;
+//        PRO/ELITE-only fields absent ─────────────────────────────────────────
+const cand8f = resultsEvt.candidates[0];
+assert('offset'    in cand8f,
+  '8f. BASIC candidate has offset field');
+assert('label'     in cand8f,
+  '8f. BASIC candidate has label field');
+assert('coverType' in cand8f,
+  '8f. BASIC candidate has coverType field');
+assert(!('spookLevel'   in cand8f),
+  '8f. BASIC candidate does NOT have spookLevel (PRO+ only)');
+assert(!('presenceHint' in cand8f),
+  '8f. BASIC candidate does NOT have presenceHint (PRO+ only)');
+assert(!('speciesBand'  in cand8f),
+  '8f. BASIC candidate does NOT have speciesBand (ELITE only)');
+
+// ── 8g. cancel() is a no-op when finder is idle ──────────────────────────────
+// No scan is pending at this point. cancel() must not throw.
+let cancelNoOpThrew = false;
+try {
+  fishFinder.cancel();
+} catch {
+  cancelNoOpThrew = true;
+}
+assert(!cancelNoOpThrew,
+  '8g. cancel() with no pending scan does not throw');
+
+// ── 8h. cancel() during an active scan emits FISH_FINDER_CANCELLED ───────────
+fishFinder.scan(); // start a new scan (6000ms)
+let cancelledEvt = null;
+const unsubCancelled = bus.on('FISH_FINDER_CANCELLED', evt => { cancelledEvt = evt; });
+fishFinder.cancel();
+unsubCancelled();
+
+assert(cancelledEvt !== null,
+  '8h. FISH_FINDER_CANCELLED event was emitted after cancel() during active scan');
+
+// Advance clock past the old scan time — no FISH_FINDER_RESULTS should fire
+let lateResults = null;
+const unsubLate = bus.on('FISH_FINDER_RESULTS', evt => { lateResults = evt; });
+clock.tick(6001);
+unsubLate();
+assert(lateResults === null,
+  '8h. no FISH_FINDER_RESULTS emitted after cancel() (scan was aborted)');
+
+// ===========================================================================
 // SUMMARY
 // ===========================================================================
 const total = _passed + _failed;
@@ -1052,3 +1353,4 @@ console.log('='.repeat(50));
 if (_failed > 0) {
   process.exit(1);
 }
+

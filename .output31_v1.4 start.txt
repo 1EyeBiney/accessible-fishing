@@ -1,0 +1,210 @@
+Semantic workspace search is not currently available
+Thinking: Let me read the project_brief.md to get all the relevant decisions for Phase 4. I need to understand D-022, D-044, D-051, D-041, D-042, D-043, D-067, D-068, and H-017.
+Read project_brief.md, lines 1 to 100
+Read project_brief.md, lines 100 to 280
+Thinking: Good, I have all the information I need. Now let me understand what Phase 4 needs:
+1. `src/equipment/boats.js` - Updated version with D-022 stat blocks AND D-067 `maxRods`/`maxLures` capacity fields, plus `activeBoatStats()` and `canReach(poiId)`.
+2. `src/equipment/equipment.js` - Full D-044 schemas for Rods, Lures, Fish. D-051 Live Bait vigor. H-017 active tackle boundary. No crafting (D-068).
+3. `src/equipment/fishFinder.js` - D-041 scanning logic, D-042 tier ladder, D-043 scan mutual exclusion.
+Now I'm working through the boats file in detail. Each boat needs the full D-022 stat block covering speed, draft, noise, fuel mechanics, wind effects, casting stability, and upgrade slots. I also need to add the D-067 capacity fields—Rowboat gets 2 rods and 5 lures, Bass Boat gets 6 rods and 20 lures, and I'll need to infer reasonable values for the Tournament Boat.
+The public API exposes `activeBoatStats()` to retrieve current boat data and `canReach(poiId)` which leverages the POI graph to determine whether the active boat's draft rating permits access to a given location.
+Moving into equipment.js, I'm setting up the D-044 schemas for the three main item types. Rods need a comprehensive stat block including class, length, tier, power rating from ultralight to extra-heavy, action speed, lure weight compatibility with a sweet spot, line tension limits, compliance for shock absorption, hookset sensitivity, durability, and audio characteristics. Lures follow a similar pattern with category, tier, weight, profile, and presentation details like running depth and action type.
+For D-051, I'm tracking live bait vigor degradation across multiple triggers—each cast, each nibble, and passive time decay. The H-017 constraint means that while the active tackle set freezes during tournament mode, individual item state like durability and vigor must remain mutable. There's no crafting system to implement per D-068, and the public API provides getters for rods, lures, and bait along with methods to apply damage and check vigor status.
+In fishFinder.js, I'm querying the structure index for POI candidates and then enriching those results with spook and pressure factors. The tier ladder is starting to take shape with ANGLER'S as the base tier.
+Now I'm laying out the scan tiers with their respective timing, candidate caps, and field availability—from INTUITION's basic 10-second scan up through ELITE with the most detailed data. I need to check the tournament scan lock flag before allowing any scan to execute, and the results emit a structured event with all the candidate details based on tier level. The public API exposes scan and cancel methods.
+I'm moving on to implement the three core files. The boats.js file already has a stub from Phase 3 that I'll replace with the full D-067 implementation. Equipment.js needs a complete catalog of rods, lures, and bait across their respective tiers and categories. The fishFinder.js module will need access to the structure index, cast spook model, and fish behavior data to power the scan results.
+For the starter catalog, I'm thinking through what rods should cover—the 7-step power ladder from ultralight through extra-heavy with a few representative options per tier to make the system feel complete. Lures span nine categories, so I'll seed the catalog with enough variety to demonstrate the system without being exhaustive.
+For live bait, I need to establish decay mechanics: vigor drops per cast, per nibble, and over time until it hits zero and the bait is lost. Since the brief doesn't specify exact decay rates, I'll pick reasonable values that feel balanced. The fishFinder module will pull in the cast spook and fish behavior logic once those are ready in Phase 5, but for now I can structure it to expect those imports.
+Looking at the finder tier specs from D-042, each tier has different scan intervals, candidate caps, and available data fields—BASIC through ELITE progressively unlock more detailed information like spook level and species band. I need to figure out how the boats module connects this tier system to the actual finder behavior.
+The boat stat block should include a `finderTier` field since the finder tier is tied to boat upgrades, not just a separate system. So I'll add that alongside the existing fields like `speedTilesPerMin` and `upgradeSlots`, mapping each boat type to its corresponding tier—Rowboat has no finder, Bass Boat gets BASIC, and Tournament Boat gets ELITE or one of the mid tiers.
+For the `canReach` method, I need to leverage the poiGraph to validate whether the boat's draft allows access to a specific point of interest, pulling the draft measurement in metres from the graph's DRAFT_CLASS_M constant.
+Now I'm thinking through the equipment module and how to enforce the H-017 boundary during tournament mode—I need to block tackle loadout changes when the tournament is active, but still allow durability and vigor updates to process normally.
+The mode state comes from `state.mode` in the stateStore, and the public API for equipment needs to expose methods for retrieving rods, lures, and bait, plus functions for applying damage and checking vigor.
+Defining the boats catalog with their stat blocks... Finishing up the boat specs with the Tournament Boat's higher performance stats, then moving into the pathfinding logic.
+Now I'm writing a function that checks whether the active boat can reach a specific point of interest by comparing the boat's draft depth against the POI's depth requirements. I'll need to import the POI graph and depth mapping constants to make this work, then I'm thinking through what state reducers are needed for the equipment system.
+I need reducers to track item durability changes on rods and lures, bait vigor updates, and tackle loadout modifications during different game states. There's also a requirement that the damage function must always be callable during active tournament play, and I need a query to read bait vigor values.
+Defining the rod catalog with different specifications... Per-cast costs 10 vigor, per-nibble costs 5, and I need to handle the time-based decay component. The spec doesn't clarify whether this should be computed on-read or event-driven, but since vigor has discrete events unlike the purely time-based spook mechanic, I'll store it as a value that decrements on specific actions with an optional time-decay layer applied when needed.
+I'm defining the core getter functions for rods, lures, and baits that return frozen definitions, plus a damage function that handles durability and vigor depletion across different item types.
+Now I'm thinking through the loadout management layer—adding and removing items from slots with tournament state checks, plus a complete loadout replacement for briefing mode. These operations dispatch to the state store with the appropriate action types. I need to figure out how spook levels tie into the inventory structure, where each item tracks its durability state.
+For per-item durability and vigor, I'm storing this directly on the items themselves—rods and lures get a durability field, while bait items track vigor alongside their count. I'm setting up reducers to handle durability and vigor changes, updating both the hub inventory and the active tackle if the item is currently equipped.
+Still writing reducer logic... I'll dispatch an `ITEM_DURABILITY_CHANGED` action and let the reducer handle updating the correct partition based on the current game mode—hub inventory during HUB/BRIEFING states, or the active tackle during tournaments.
+Now for the fishFinder integration, the `scan()` method checks if scanning is locked, grabs the current POI and boat's finder tier, schedules the scan duration, then queries candidates for that location and augments them with behavioral data before filtering by tier and emitting the results back with a locked state flag.
+Read project_brief.md, lines 100 to 280
+Thinking: The `cancel()` method clears the scheduled scan and resets the scan state. Looking at the tier-based field filtering, each finder tier reveals progressively more information—INTUITION gives just the basics like id and offset, while higher tiers like BASIC add cover type, MID includes depth and bottom composition, and PRO/ELITE layers in spook level and presence hints.
+For `presenceHint` at PRO tier, I'll defensively import from the fishBehavior module and return NONE if it's unavailable, since the spec says it's an enum of NONE, TRACE, SCATTERED, or SCHOOLED but never returns exact fish counts. Similarly, `speciesBand` at ELITE tier comes from fishBehavior and returns null if the module isn't ready yet.
+The scan scheduling uses in-game time from the clock, so a 6000ms scan delay means 6 in-game seconds, not real-world time—the clock.schedule() method handles converting that delay into the callback timing.
+During HUB mode the clock is paused, so scanning only functions when the tournament is active and the clock is running. The `finderTier` gets stored directly on the boat's stat block since the upgrade system isn't fully implemented yet, though it's conceptually tied to boat upgrades.
+Now I'm ready to write out the three files with actual rod, lure, and bait definitions since these are data-driven systems.
+Defining the rod catalog... Finishing up the rod specifications with the heaviest flipping rod, then moving into the lure catalog where I'm setting up two options per category—starting with crankbaits at different depths and jigs with varying weights and actions.
+Continuing through the remaining lure types: football jigs, plastic worms, creature baits, spinnerbaits with different blade styles, topwater poppers and frogs, and suspending jerkbaits, each tiered by weight and action profile to match different fishing conditions. Now I'm defining the species that will have affinity values tied to each lure, then moving on to write the actual equipment.js file with its public API methods for managing rods, lures, and bait, plus the loadout management functions that need to respect tournament state restrictions.
+I need to add the tackle activation methods and enforce the H-017 constraint that prevents loadout changes during active tournaments, then I'll handle the fish schema integration with fishBehavior.js.
+Now I'm defining the damageItem function that tracks wear across different event types—casts, nibbles, hooksets, and catches—with different durability penalties for rods, lures, and live bait based on the action that triggered the damage.
+For live bait vigor, I'm using per-cast and per-nibble degradation plus a time-based decay that ticks down every in-game minute. For rods and lures, I'm setting much smaller durability losses since they're meant to be more resilient, with catches being more stressful than casts and snags being particularly hard on lures.
+Now I'm looking at how the structureIndex integrates with fishFinder.js...
+Augmenting tier-gated fields...
+ELITE tier caps at 8 fields including the speciesBand. For scan duration, I'm interpreting D-042's reference to in-game milliseconds—BASIC tier gets 6000ms in-game time, which translates to 6 in-game seconds. That feels quick for a scan, but that's what the spec indicates.
+Actually, looking at the clock system more carefully: during TOURNAMENT_ACTIVE, the clock runs in real-time, so 6000ms in-game equals 6 real-world seconds for BASIC scans. That makes more gameplay sense. ANGLER'S INTUITION would be 10 in-game seconds or 10000ms. I'll use clock.schedule() with the scan duration in milliseconds, which aligns with real-time during tournaments.
+Now I'm starting to write boats.js and need to clarify the canReach(poiId) method from the public API contract.
+Implementing canReach to check if the active boat can reach a POI based on draft depth...
+Now I'm thinking through the `damageItem` function in equipment.js, where different item types have different damage kinds—rods and lures can suffer casting, catching, or snagging damage, while live bait experiences casting, nibbling, or hookset effects. The damage kind determines whether we're reducing durability or vigor, and the amount varies accordingly. I'm ready to write out all three complete files with these mechanics in place.
+Actually, I need to clarify the `vigor` function first. It's a public API that returns the current vigor of a specific bait item, reading from the state store where bait is tracked as instances with id, count, and vigor. The question is whether this vigor applies to the bait currently in use during a tournament, or if it's just the stored bait's vigor value.
+Looking at how the state is structured, there's the hub inventory with general bait storage, the pre-tournament loadout in activeTackle, and then a frozen copy that gets created when a tournament starts. During an active tournament, vigor changes should probably affect the tournament's active tackle bait items rather than the hub inventory directly, since the hub gets reconciled afterward. So I should make `vigor(baitId)` context-aware—checking the tournament's active tackle if we're in tournament mode, otherwise falling back to the hub inventory.
+Now I'm examining the initial state structure to understand what I'm working with. For Phase 4, I need to implement the three files comprehensively. The fishFinder needs to manage a clock handle that can be cancelled for cleanup, and while it doesn't need to know about the mount/unmount manifests registered by tournament.js, it should properly clean up that handle for H-005 compliance. Let me write out all three files now.
+I'm also clarifying the schema partitioning: equipment.js handles Rod and Lure catalogs (and Bait), while the Fish schema lives separately in fishBehavior.js. The D-044 contract defines these as strictly partitioned entities, so equipment.js doesn't need to define fish species data itself.
+Now I'm ready to write the three files. For boats.js, I need to add the maxRods and maxLures constraints per the spec, implement finderTier, and build out the canReach method using the POI graph. For equipment.js, I'm populating the full Rod catalog across all 7 power classes, the Lure catalog with all 9 categories, and the Live Bait catalog with vigor degradation mechanics, plus enforcing the set-membership boundaries from H-017.
+For fishFinder.js, I'm implementing the tier ladder with scan times and field caps, the scan and cancel methods, the scanLocked validation, structureIndex integration, and setting up the FISH_FINDER_RESULTS emission. I also need to define the rod action enum as SLOW, MEDIUM, FAST, XFAST and figure out the rod class field—looks like it should be SPINNING and CASTING at minimum.
+Now I'm working through the lure configuration enums: actionType for presentation (like CRANKBAIT_WOBBLE, JIG_HOP, WORM_DRAG), presentationProfile (FINESSE, NATURAL, REACTION, AGGRESSIVE), sizeProfile based on prey preferences (MICRO through MAGNUM), colorClass (NATURAL, BRIGHT, DARK, METALLIC, TRANSPARENT), and I'm defining the noiseProfile next to capture how the lure generates sound and vibration.
+For speciesAffinity, I'm mapping out the fish species that will be referenced across the system—largemouth and smallmouth bass, trout varieties, bluegill, crappie, and catfish—with affinity values ranging from 0 to 1, where 0.5 is neutral. Now I'm moving into the rod power and action specifications from the schema.
+I'm defining numeric mappings for rod power from ultra-light to extra-heavy on a 0-1 scale, and action speeds from slow to extra-fast, which will feed into the physics calculations for compliance and sensitivity. With these values locked in, I'm ready to start writing out the actual implementation files.
+Now I'm thinking through the state structure for equipment management — items like rods, lures, and bait are stored in the inventory with durability or vigor values, and there's also an active tackle reference that gets frozen when a tournament starts. The `damageItem` function will need to locate an item in the right partition and apply damage calculations.
+I'm sketching out the action types needed: one for updating item durability, another for bait vigor, actions for adding and removing items from the loadout during hub/briefing phases, and an action to freeze the active tackle when entering a tournament.
+Now I'm writing the reducer logic that handles durability changes by checking the current game mode and updating either the tournament's active tackle or the hub inventory accordingly. Finishing the reducer logic...
+The JS function should throw early at the API boundary before dispatching, but the reducer acts as a safety net by checking the mode and silently rejecting any loadout mutations during tournament mode. I'm also thinking through how to track that the active tackle set is frozen when entering tournament mode—this might need a dedicated action to capture that state transition. Defining inventory management reducers...
+Now I'm clarifying the two-layer structure of equipment.js: the frozen catalog layer holds all the rod/lure/bait blueprints, while the mutable inventory layer tracks what the player actually owns with their current durability and vigor values. The public API functions like `getRod()`, `getLure()`, and `getBait()` pull from the catalog definitions, while separate functions handle damage and vigor changes on the inventory side.
+For the loadout system, I need `addToLoadout()` and `removeFromLoadout()` to enforce H-017 constraints, plus `activeTackle()` to read the current equipped setup from the state store. The key insight is that `damageItem()` updates the mutable instance state in the store rather than touching the static catalog definitions—when you damage an item, you're modifying its durability in the player's inventory partition.
+To actually find and update an item instance, I need to know which partition it lives in: either the hub inventory or the tournament's active tackle. The partition depends on the current game mode. Looking at the initial state structure, rod and lure IDs appear to be type identifiers like 'ROD_SPINNING_ML' rather than unique instance IDs, which means players own at most one of each type. But this creates a problem if players should be able to own multiple instances of the same rod type.
+The brief doesn't explicitly address duplicates, so for now I'm treating items as unique by type ID—no duplicates in inventory. If a player buys the same rod twice, that's something the shop logic will handle later. Time to start writing the actual implementation.
+I'm building the fishFinder.js module with a scan function that checks for a scan lock, cancels any in-progress scan, and retrieves the current POI and tier from state.
+Continuing the scan function, I schedule the scan completion using the clock with the tier's configured duration, then emit a FISH_FINDER_SCANNING event for audio and UI feedback before returning the scan details. The cancel function will handle cleanup by canceling the scheduled handle...
+Building the completion logic... Still writing config... Defining helper functions for the finder tier lookup and safe reads for spook data with fallbacks, then checking against the constraint that fishFinder and casting modules should only communicate through the tournament scanLocked flag. So `fishFinder` can't directly import from the `casting` module, but it needs access to spook data. The answer is that `castSpookModel` writes spook state to the tile objects in the world map, and `fishFinder` can read that state directly through `worldMap.getTile()` without needing a direct import. This way both modules stay decoupled while sharing data through the shared tile state.
+Writing the spook computation... Finishing the pressure decay function...
+Now I'm mapping pressure levels to presence hints since the fish behavior module isn't ready yet—pressure 0 maps to NONE, 1 to TRACE, 2-3 to SCATTERED, and 4-5 to SCHOOLED as a reasonable stand-in for occupancy data. Writing the presence hint logic...
+For the species band, I'm returning null when fish behavior data isn't available yet, since that'll be populated later when the module is implemented. Now I'm ready to actually write out these files.
+I need to clarify the event schema for fish finder results - D-041 uses `spook?` but D-042 calls it `spookLevel`, so I'll go with `spookLevel` since that's more descriptive and consistent with D-042. I also notice the schema should include `pressure?` at the PRO+ tier, so I'll make sure that gets added to the results.
+Wait, I'm second-guessing myself on pressure. D-042 explicitly lists what's available per tier (PRO gets `spookLevel` and `presenceHint`), but doesn't mention pressure. Yet D-041 includes `pressure?` in the candidate schema. The question is whether pressure should be returned in the candidates even though D-042 doesn't list it as a tier-specific augmentation - it might be part of the base data that's always available. Looking at the D-041 schema more carefully, I see that `pressure` is listed as an optional field in the candidates object, so I should include it as a potential field that might be populated at PRO+ tier even though D-042 doesn't explicitly mention it. The pressure data is primarily used for internal ranking and scoring of candidates, though it could optionally be exposed to users at higher tiers. I've spent enough time analyzing the specs—time to start writing the actual implementations for all three files with full stat blocks and proper field handling.
+Now I'm building out the boats.js module with the `finderTier` field, an `activeBoatStats()` function that reads from the hub, a `canReach()` method that checks against POI depth thresholds, direct stat lookups via `statsFor()`, and a convenience function to set the active boat through the state store. For equipment.js, I'm setting up the rod and lure catalogs with proper variety across power classes and categories, adding live bait options, and implementing the damage tracking system with reducer functions for all mutations.
+Now I'm adding the vigor lookup for bait, the loadout management functions with H-017 compliance that prevent modifications during tournaments, and convenience getters for the active tackle. For the fish finder, I'm implementing the five-tier configuration with a scan system that respects the locked state, queries the structure index to augment results, and computes spook and pressure values directly from tile state without importing the spook model.
+I'm also factoring in the species band from occupancy data that the fish behavior module will populate, then ranking candidates by combining structure scores with spook and pressure penalties. Now I'm ready to write out the actual implementation, starting with the equipment module and building a realistic fishing rod and lure catalog.
+Defining the equipment catalog... Continuing with spoons and swimbaits, then live bait options like nightcrawlers, minnows, and leeches. I'm also mapping species affinities for the lures—largemouth bass are aggressive across most types, while smallmouth bass favor crayfish imitations, jerkbaits, and spoons.
+Adding the remaining species: rainbow trout go for spinners and spoons with live bait, bluegill need smaller lures and live bait, and catfish prefer bottom baits and spoons. I'm using affinity values from 0 to 1 where 0.5 is neutral, only storing the non-neutral ones to keep the data compact.
+Now I need to understand how the state reducer pattern works before writing the files—specifically how reducers receive the full state object and return the updated state, which means they can always check the current game mode.
+Writing the item durability reducer... Still writing reducer logic...
+Now I'm ready to generate the files. One thing I need to figure out is how `damageItem` should determine what type of item it's working with—whether that's a rod, lure, or bait. Since the function signature doesn't include an item type parameter, I'll need to look it up in the catalog to figure out which category the item belongs to.
+I'm implementing this by checking each catalog in sequence: if the id exists in the rod catalog, I damage it as a rod; if it's in the lure catalog, I damage it as a lure; if it's in the bait catalog, I damage it as bait. If none of those match, I throw an error for an unknown item.
+For the `vigor` function, I'm checking the current game mode to determine where to read the active tackle from—during a tournament it comes from the tournament state, otherwise from the regular equipment state.
+Now I'm ready to start writing the actual files, beginning with the bait catalog where I need to define vigor-specific properties...
+Actually, I should clarify something about the state structure first—there's both `state.hub.activeTackle` for the pre-tournament loadout and `state.tournament` for the active tournament state, and I need to make sure I'm reading from the right place depending on the context. Since the deep copy approach is straightforward and this only happens once per tournament, I'll move forward with implementing the changes. Now I'm adding the lure weight range specifications for each rod type, defining the minimum, maximum, and optimal casting weights in ounces.
+For the max line tension values, I need to establish a consistent scale since the brief doesn't specify units—I'll use an arbitrary 0 to 30 range normalized by power class, where ultralight rods handle around 4 units and extra-heavy rods max out at 30.
+For compliance, I'm setting up a 0 to 1 scale where 1 represents maximum flexibility, with ultralight rods being the most compliant.
+For hookset sensitivity, I'm using the same 0 to 1 scale where higher values mean more sensitive, with extra-heavy rods having the highest sensitivity.
+For lures, I'm defining presentation profiles as reaction-based, finesse, natural, or aggressive behaviors in water, size bands from micro to magnum, and color classes spanning natural, bright, dark, metallic, and transparent options.
+Now I'm thinking through which fish species should be included based on the game context. Setting up audio tokens for rods and lures...
+I need to clarify whether the fish finder scan should pull spook data from the casting module or read it directly from tile state. Since H-014 restricts imports from casting files, I'll access the spook data through tile state as originally planned. Now I'm ready to write out the three files.
+Acknowledged — reading from
+project_brief.md (/c:/nbs/afish/project_brief.md)
+v1.13. Consuming D-022, D-041, D-042, D-043, D-044, D-045, D-046, D-051, D-067, D-068, D-069, H-014, H-017 before writing.
+Created 3 todos. 3 items: Write src/equipment/boats.js (in-progress); Write src/equipment/equipment.js (not-started); Write src/equipment/fishFinder.js (not-started)
+Thinking: Now let me read the existing boats.js stub to see what's already there.
+Read boats.js, lines 1 to 120
+Read boats.js, lines 120 to 139
+Thinking: Good, I have the full stub. Now let me write the complete Phase 4 rewrite of boats.js with:
+1. D-022 stat block fields
+2. D-067 `maxRods` and `maxLures` fields
+3. `finderTier` field (for fishFinder.js)
+4. `canReach(poiId)` method using poiGraph
+For `canReach(poiId)`, I need to import poiGraph. Let me check what poiGraph exports.
+Searched for regex export function|export const (**/src/world/poiGraph.js), 14 results. Files: c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js
+Read poiGraph.js, lines 62 to 100
+Thinking: Now I have everything I need to write boats.js. The `canReach(poiId)` function will:1. Get the active boat stats
+2. Get the POI from poiGraph.getPoi(poiId)3. Check if the POI's draft class allows this boat's draft
+For `canReach(poiId)`:
+- The POI has a `draftClass` field (e.g., 'SHALLOW', 'MEDIUM', 'DEEP')
+- The boat has a `shallowDraftMin` in metres
+- `POI_DRAFT_DEPTH_M[poi.draftClass]` gives the minimum water depth at that POI
+- A boat can reach the POI if its draft requirement is shallow enough for that POI's depth
+I'm realizing there's a nuance here with the tradeoff mentioned in the brief—rowboats with their shallow draft can access shallow POIs that bass boats can't, but I need to make sure I have the comparison direction right.
+Writing the canReach function... <= 1.00 ✓
+- Tournament Boat (1.20m) cannot reach MEDIUM (1.00m) → 1.20 > 1.00 ✗
+- Tournament Boat (1.20m) can reach DEEP (2.00m) → 1.20 <= 2.00 ✓
+This confirms the design tradeoff: rowboats unlock shallow areas that larger boats can't access, while tournament boats dominate open water but are restricted from those shallow zones.
+Now I need to write out the full boats.js file. But first, I'm realizing the `canReach` function also needs to verify there's an actual path to the POI, not just that the water depth is sufficient. Looking back at the requirements, I should check how the graph traversal works for edge connectivity.
+Actually, rethinking this—the brief describes `canReach` as checking accessibility by draft class, meaning whether a boat type can physically access a POI based on its depth classification. That's distinct from pathfinding. The POI's depth tier just needs to match the boat's draft capability, so a rowboat reaches shallow POIs that bass boats can't, regardless of navigation routes. I might need to verify edge traversal too for full correctness, but `canReach` seems focused on the draft-to-depth matching. Writing boats.js...
+Now I have the full context. Writing all three Phase 4 files:
+Created boats.js
+Read boats.js
+Thinking: Now I need to rewrite this file. Since it's the full Phase 4 rewrite, I'll replace the entire content. I'll need to make multiple edits. Let me plan the key changes:
+1. Update the file header comment (add D-067 fields, finderTier)
+2. Add import for poiGraph
+3. Update ROWBOAT stat block (add maxRods, maxLures, finderTier, noiseProfile in right order)
+4. Update BASS_BOAT stat block (same)
+5. Update TOURNAMENT_BOAT stat block (same)
+6. Update HUB_ACTIVE_BOAT_SET reducer (add guard for invalid boatId)
+7. Update the JSDoc for activeBoatStats() and add the canReach() function that checks if a boat can reach a specific point of interest.
+Replacing 120 lines with 193 lines in boats.js
+```
+```
+```
+```
+Starting: Write src/equipment/equipment.js (2/3). 3 items: Write src/equipment/boats.js (completed); Write src/equipment/equipment.js (in-progress); Write src/equipment/fishFinder.js (not-started)
+Now writing equipment.js — the largest file. D-044 rod/lure schemas, D-045 power ladder, D-046 lure categories, D-048 hand-tuned affinity, D-051 live bait vigor, H-017 set-membership boundary:
+Created equipment.js
+Thinking: Now I need to add the `LOADOUT_REMOVE_ALL` reducer since I used it in `setActiveTackle`. Let me also check if that was referenced correctly... Yes, in `setActiveTackle` I dispatch `LOADOUT_REMOVE_ALL` but I didn't define that reducer. Let me add it.
+Also, I need to think about the `setActiveTackle` function - instead of dispatching LOADOUT_REMOVE_ALL and then multiple LOADOUT_ADD calls, which is more complex, let me simplify it to dispatch a single action that replaces the full activeTackle. Let me update it.
+Since `setActiveTackle` already calls `_requireMutableLoadout` first, we know we're not in TOURNAMENT_ACTIVE mode, so the individual LOADOUT_ADD dispatches should be safe even though they also check for that mode. I'll go ahead and add the LOADOUT_REMOVE_ALL reducer to equipment.js.
+Need to add the LOADOUT_REMOVE_ALL reducer that setActiveTackle dispatches:
+Replacing 2 lines with 20 lines in equipment.js
+```
+```
+```
+```
+Starting: Write src/equipment/fishFinder.js (3/3). 3 items: Write src/equipment/boats.js (completed); Write src/equipment/equipment.js (completed); Write src/equipment/fishFinder.js (in-progress)
+Now writing fishFinder.js — D-041 scan logic, D-042 tier ladder, D-043 mutex. H-014: no imports from casting/*; spook/pressure read directly from tile state via
+worldMap.getTile() (c:\nbs\afish\src\world\worldMap.js:372)
+.
+Created fishFinder.js
+Completed: Write src/equipment/fishFinder.js (3/3). 3 items: Write src/equipment/boats.js (completed); Write src/equipment/equipment.js (completed); Write src/equipment/fishFinder.js (completed)
+Now verify all three files pass node syntax check:
+Running node --input-type=module --eval &quot;import &#39;./src/equipment/boats.js&#39;; import &#39;..... node --input-type=module --eval "import './src/equipment/boats.js'; import './src/equipment/equipment.js'; import './src/equipment/fishFinder.js'; console.log('syntax OK')" 2>&1
+Clean. Now run the integration harness to verify 146/146 still passes with the Phase 4 additions:
+Errored. Running node tests/harness.js 2&gt;&amp;1. node tests/harness.js 2>&1
+Thinking: All 146/146 pass. The `Command exited with code 1` appears to be PowerShell reporting the stderr messages as a non-zero exit code, but looking at the HARNESS SUMMARY all tests pass.
+The "NativeCommandError" in the output is just PowerShell's way of reporting that stderr output was written, not an actual test failure. The harness shows 146/146 passed, 0 failed.
+Let me verify this by looking at what the harness.js exit code is.
+146/146 still passing (the exit code 1 is PowerShell's stderr-redirected output noise — the harness summary is authoritative). Let me verify the harness exit code is from the harness itself:
+Running node tests/harness.js ; Write-Host &quot;Node exit: $LASTEXITCODE&quot;. node tests/harness.js ; Write-Host "Node exit: $LASTEXITCODE"
+Exit 0. All green.
+Phase 4 complete. Summary of what was written:
+src/equipment/boats.js (/c:/nbs/afish/src/equipment/boats.js)
+— rewritten
+Added D-067
+maxRods (c:\nbs\afish\src\equipment\boats.js:71)
+/
+maxLures (c:\nbs\afish\src\equipment\boats.js:72)
+to all three stat blocks (Rowboat: 2/5, Bass Boat: 6/20, Tournament Boat: 10/40)
+Added
+finderTier (c:\nbs\afish\src\equipment\boats.js:73)
+field (Rowboat: INTUITION, Bass Boat: BASIC, Tournament Boat: ELITE)
+Added
+canReach(poiId) (c:\nbs\afish\src\equipment\boats.js:196)
+— reads
+POI_DRAFT_DEPTH_M (c:\nbs\afish\src\world\poiGraph.js:81)
+from poiGraph, compares to
+boat.shallowDraftMin (c:\nbs\afish\src\equipment\boats.js:80)
+; rowboats uniquely access SHALLOW POIs (D-022 tradeoff)
+Hardened `HUB_ACTIVE_BOAT_SET` reducer against invalid boat ids
+src/equipment/equipment.js (/c:/nbs/afish/src/equipment/equipment.js)
+— new
+**ROD_CATALOG**: 7 rods covering all D-045 power classes (UL → XH), spinning/casting/flipping, tiers 1–4
+**LURE_CATALOG**: 18 lures across all 9 D-046 categories (2 per category), D-048 hand-tuned `speciesAffinity` per lure, full D-044 schema (presentation, sizeProfile, colorClass, snagRisk, audio)
+**BAIT_CATALOG**: 3 live baits (nightcrawler, minnow, leech) with D-051 vigor-decay rates (per cast / nibble / hookset / time)
+**H-017**: `addToLoadout` / `removeFromLoadout` throw during `TOURNAMENT_ACTIVE`; `damageItem` / `vigor` are always writable regardless of mode; both directions enforced in both the API layer and reducers (safety net)
+Reducers: `ITEM_DURABILITY_CHANGED`, `BAIT_VIGOR_CHANGED`, `LOADOUT_ADD`, `LOADOUT_REMOVE`, `LOADOUT_REMOVE_ALL`, `ACTIVE_TACKLE_SET`, `INVENTORY_ITEM_ACQUIRED`
+src/equipment/fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+— new
+`scan()` — checks
+state.tournament.scanLocked (c:\nbs\afish\src\core\stateStore.js:84)
+(D-043 mutex), resolves tier from
+boats.activeBoatStats().finderTier (c:\nbs\afish\src\navigation\navigation.js:71)
+, schedules _completeScan via
+clock.schedule() (c:\nbs\afish\src\core\clock.js:225)
+`cancel()` — clears pending clock handle, emits `FISH_FINDER_CANCELLED`
+D-042 TIER_CONFIG: all 5 tiers with scan times, candidate caps, cumulative field sets
+Candidates ranked by
+structureScore (c:\nbs\afish\tests\harness.js:387)
+with pressure/spook penalties; fields filtered per tier
+**H-014 compliant**: no imports from `casting/*`; spook (D-038) and pressure (D-039) read directly from
+tile.state.spook (c:\nbs\afish\tests\harness.js:329)
+/ tile.state.pressure via
+worldMap.getTile() (c:\nbs\afish\src\world\worldMap.js:372)
+using the same compute-on-read formulas
+`presenceHint` (PRO+) derived from `tile.state.occupancy.fishCount`; `speciesBand` (ELITE) from `tile.state.occupancy.speciesBand` — both populated by `fishBehavior.js` in Phase 6+

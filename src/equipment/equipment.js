@@ -1100,21 +1100,9 @@ stateStore.registerReducer('LOADOUT_REMOVE_ALL', (state) => {
   };
 });
 
-/**
- * ACTIVE_TACKLE_SET — copies hub.activeTackle into tournament.activeTackle.
- *
- * Payload: { activeTackle: object }
- * Dispatched by tournament.js on enter-TOURNAMENT_ACTIVE (D-069).
- * Deep-copies the payload so further hub mutations do not bleed into the
- * frozen tournament partition (H-017 set-membership freeze).
- */
-stateStore.registerReducer('ACTIVE_TACKLE_SET', (state, { activeTackle }) => ({
-  ...state,
-  tournament: {
-    ...state.tournament,
-    activeTackle: JSON.parse(JSON.stringify(activeTackle)),
-  },
-}));
+// NOTE: ACTIVE_TACKLE_SET reducer is owned by stateStore.js (writes to hub.activeTackle).
+// equipment.js does NOT register a competing ACTIVE_TACKLE_SET.
+// Tournament-partition freeze is handled by TOURNAMENT_ENTERED (stateStore.js).
 
 /**
  * INVENTORY_ITEM_ACQUIRED — adds a newly purchased item to hub.inventory.
@@ -1334,7 +1322,7 @@ export function addToLoadout(slotType, itemId) {
   if (!ROD_CATALOG[itemId] && !LURE_CATALOG[itemId] && !BAIT_CATALOG[itemId]) {
     throw new Error(`equipment.addToLoadout: unknown item id "${itemId}"`);
   }
-  stateStore.dispatch('LOADOUT_ADD', { slotType, itemId });
+  stateStore.dispatch({ type: 'LOADOUT_ADD', payload: { slotType, itemId } });
 }
 
 /**
@@ -1348,7 +1336,7 @@ export function addToLoadout(slotType, itemId) {
  */
 export function removeFromLoadout(slotType, itemId) {
   _requireMutableLoadout('removeFromLoadout');
-  stateStore.dispatch('LOADOUT_REMOVE', { slotType, itemId });
+  stateStore.dispatch({ type: 'LOADOUT_REMOVE', payload: { slotType, itemId } });
 }
 
 /**
@@ -1363,11 +1351,8 @@ export function removeFromLoadout(slotType, itemId) {
  */
 export function setActiveTackle(plan) {
   _requireMutableLoadout('setActiveTackle');
-  // Dispatch each item via LOADOUT_ADD; start from a clean slate.
-  stateStore.dispatch('LOADOUT_REMOVE_ALL', {});
-  for (const rod  of (plan.rods  ?? [])) stateStore.dispatch('LOADOUT_ADD', { slotType: 'rods',  itemId: rod.id  });
-  for (const lure of (plan.lures ?? [])) stateStore.dispatch('LOADOUT_ADD', { slotType: 'lures', itemId: lure.id });
-  for (const bait of (plan.bait  ?? [])) stateStore.dispatch('LOADOUT_ADD', { slotType: 'bait',  itemId: bait.id });
+  // Write the full plan to hub.activeTackle via stateStore's ACTIVE_TACKLE_SET (D-069).
+  stateStore.dispatch({ type: 'ACTIVE_TACKLE_SET', payload: { activeTackle: plan } });
 }
 
 /**
@@ -1449,10 +1434,7 @@ function _damageVigor(baitId, kind) {
   if (loss <= 0) return;
 
   const currentVigor = vigor(baitId);
-  stateStore.dispatch('BAIT_VIGOR_CHANGED', {
-    baitId,
-    newVigor: currentVigor - loss,
-  });
+  stateStore.dispatch({ type: 'BAIT_VIGOR_CHANGED', payload: { baitId, newVigor: currentVigor - loss } });
 }
 
 /**
@@ -1482,9 +1464,5 @@ function _damageDurability(id, itemType, kind) {
   const item = list.find(i => i.id === id);
   if (!item) return; // item not in inventory; no-op
 
-  stateStore.dispatch('ITEM_DURABILITY_CHANGED', {
-    itemId:         id,
-    itemType,
-    newDurability:  Math.max(0, item.durability - loss),
-  });
+  stateStore.dispatch({ type: 'ITEM_DURABILITY_CHANGED', payload: { itemId: id, itemType, newDurability: Math.max(0, item.durability - loss) } });
 }
