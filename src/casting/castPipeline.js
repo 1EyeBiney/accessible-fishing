@@ -3,93 +3,100 @@
  *
  * Public API Contract: (no exported functions — purely event-driven FSM)
  *
- * Owns the full 5-tap casting sequence from TARGET_LOCKED to CAST_LANDED (D-014).
- * Implements Bird's Nest penalty (D-015), Spool Wall boundary clamping (D-016),
- * mismatched-lure scatter penalty (D-052), and scan mutual exclusion (D-043).
+ * Owns the full 5-tap "Accessible Golf" casting sequence from TARGET_LOCKED
+ * through CAST_LANDED (D-014 v1.14 revision).  Implements Bird's Nest
+ * penalty for ARROW whiffs only (D-015 v1.14), Spool Wall boundary clamping
+ * (D-016), mismatched-lure scatter penalty (D-052), scan mutual exclusion
+ * (D-043), and the D-070 2500 ms accessibility floor on metronome phases.
  *
  * Lifecycle:
  *   Mounted in TOURNAMENT_ACTIVE via modeRouter mount manifest.
  *   All bus subscriptions and clock handles are released on onUnmount (H-005).
  *
- * ── Cast FSM Phases (D-014) ──────────────────────────────────────────────────
+ * ── Cast FSM Phases (D-014 v1.14 — Accessible Golf) ─────────────────────────
  *
  *   IDLE
  *     Waiting for TARGET_LOCKED (emitted by targetSelector after player confirms).
- *     Arrow and Spacebar events are ignored in this phase.
+ *     All input events are ignored in this phase.
  *
- *   BACKSWING  (entered on TARGET_LOCKED)
+ *   ARMED  (entered on TARGET_LOCKED)
  *     Wind vector is sampled and held for the cast's lifetime (D-012).
  *     state.tournament.scanLocked is set → blocks new scans (D-043).
- *     Waiting for: Tap 1 — any Arrow key.
+ *     Awaiting Tap 1 — ARROW_UP.  Arrow whiff timer running (D-015 rev).
  *
- *   POWER      (entered on Tap 1 Arrow)
- *     Records _tap1AtMs. Wind Mitigation timer has NOT yet started.
- *     Waiting for: Tap 2 — Spacebar.
+ *   PHASE_1_METRONOME  (entered on Tap 1 ARROW_UP)
+ *     Records _tap1AtMs = phase1StartAtMs.  Fixed-duration metronome runs
+ *     for CAST_PHASE_MIN_MS (D-070).  Emits AUDIO_METRONOME_TICK on each
+ *     beat (D-021 addendum).  Player MAY tap SPACEBAR once during this
+ *     window — _tap2AtMs is recorded for wind-mitigation math.  Missing
+ *     the Spacebar yields 0% mitigation but does NOT Bird's Nest the cast
+ *     (D-014 rev, D-015 rev).  Whiff timer is OFF during this phase.
+ *     Transitions to PHASE_2_ACCURACY automatically when the metronome ends.
  *
- *   APEX       (entered on Tap 2 Spacebar)
- *     Records _tap2AtMs — opens Wind Mitigation timing window (D-014).
- *     Waiting for: Tap 3 — any Arrow key.
+ *   PHASE_2_ACCURACY  (auto-entered when PHASE_1 metronome ends)
+ *     Records phase2StartAtMs.  Emits AUDIO_PITCH_SWEEP {direction:'UP'} so
+ *     synthGraph runs a rising pitch ramp.  Awaiting Tap 3 — ARROW_UP.
+ *     Arrow whiff timer running.  Tap 3 instantly locks accuracy (computes
+ *     scatter radius from Phase-2 reaction time) and starts PHASE_3.
  *
- *   RELEASE    (entered on Tap 3 Arrow)
- *     Records _tap3AtMs. Scatter circle radius computed from Tap1→Tap3 timing.
- *     D-052 mismatched-lure scatter penalty applied here.
- *     Wind Mitigation timer is now in play between Tap2 and the upcoming Tap4.
- *     Waiting for: Tap 4 — Spacebar.
+ *   PHASE_3_METRONOME  (entered on Tap 3 ARROW_UP)
+ *     Records _tap3AtMs = phase3StartAtMs.  Fixed-duration metronome runs
+ *     for CAST_PHASE_MIN_MS.  Emits AUDIO_METRONOME_TICK on each beat.
+ *     Player MAY tap SPACEBAR once — _tap4AtMs recorded for mitigation math.
+ *     Whiff timer is OFF.  Transitions to PHASE_4_IMPACT when metronome ends.
  *
- *   SPLASHDOWN (entered on Tap 4 Spacebar)
- *     Records _tap4AtMs — closes Wind Mitigation window.
- *     Mitigation factor computed from (Tap2→Tap4) vs (Tap1→Tap3) duration match.
- *     D-014: perfect match → 80% wind reduction.
- *     Waiting for: Tap 5 — any Arrow key.
+ *   PHASE_4_IMPACT  (auto-entered when PHASE_3 metronome ends)
+ *     Records phase4StartAtMs.  Emits AUDIO_PITCH_SWEEP {direction:'DOWN'}.
+ *     Awaiting Tap 5 — ARROW_DOWN.  Arrow whiff timer running.
  *
- *   → CAST_LANDED (on Tap 5 Arrow)
- *     Computes final landing offset: target + wind drift (mitigated) + scatter.
+ *   → CAST_LANDED  (on Tap 5 ARROW_DOWN)
+ *     Computes mitigation factor from Spacebar timing match across the two
+ *     metronomes (0 if either Spacebar was missed).  Computes final landing
+ *     offset: target + wind drift (mitigated) + scatter.
  *     D-016 Spool Wall: clamps landing to POI frameRadius if exceeded.
  *     Determines splash kind (SILENT / NORMAL / LOUD) from cast accuracy.
- *     Calls castSpookModel.applySplash to register spook on the landing tile.
+ *     Calls castSpookModel.applySplash on the landing tile.
  *     Emits CAST_LANDED bus event (consumed by fishBehavior Phase 6).
  *     Dispatches CAST_PHASE_CHANGED({ cast: null }) and SCAN_UNLOCKED.
  *     Returns to IDLE.
  *
- * ── Bird's Nest Penalty (D-015) ──────────────────────────────────────────────
+ * ── Whiff / Bird's Nest (D-015 v1.14) ────────────────────────────────────────
  *
- *   If the player fails to deliver the next expected tap within INTER_TAP_TIMEOUT_MS
- *   (3 s), the cast is voided:
+ *   The arrow whiff timer runs ONLY during ARROW-expecting phases:
+ *     ARMED            (awaiting Tap 1 ARROW_UP)
+ *     PHASE_2_ACCURACY (awaiting Tap 3 ARROW_UP)
+ *     PHASE_4_IMPACT   (awaiting Tap 5 ARROW_DOWN)
+ *
+ *   If the player fails to deliver the expected arrow within ARROW_WHIFF_TIMEOUT_MS
+ *   the cast is voided:
  *     1. inputAdapter.lock('BIRDS_NEST', nestDurationMs) — physical lockout.
- *        nestDurationMs is random in [10 000, 15 000] ms (D-015).
- *     2. CAST_BIRDS_NEST bus event emitted { nestDurationMs, atMs }.
+ *        nestDurationMs is random in [BIRDS_NEST_MIN_MS, BIRDS_NEST_MAX_MS].
+ *     2. CAST_BIRDS_NEST bus event emitted { nestDurationMs, phase, atMs }.
  *     3. CAST_PHASE_CHANGED({ cast: null }) dispatched.
  *     4. SCAN_UNLOCKED dispatched.
  *     5. State reset to IDLE.
+ *
+ *   Spacebar misses are SILENT (D-015 rev) — they do not Bird's Nest.
  *   The world clock CONTINUES to run during the lockout (D-015, D-013).
  *
- * ── Scatter & Mitigation Math ────────────────────────────────────────────────
+ * ── Scatter Math (D-014 rev: Phase-2 reaction-based) ─────────────────────────
  *
- *   Scatter radius (set at Tap 3, Apex):
- *     idealMs     = IDEAL_BACKSWING_MS (600 ms) — sweet-spot backswing duration
- *     elapsed     = Tap3.atMs − Tap1.atMs
- *     deviation   = |elapsed − idealMs|
- *     quality     = clamp(1 − deviation / SCATTER_QUALITY_WINDOW, 0, 1)
- *     baseScatter = lerp(MAX_SCATTER_TILES, MIN_SCATTER_TILES, quality)
- *     After D-052 mismatch check: scatter *= MISMATCH_SCATTER_MULTIPLIER if applicable.
+ *   reactionMs   = _tap3AtMs − phase2StartAtMs
+ *   deviation    = |reactionMs − IDEAL_REACTION_MS|
+ *   quality      = clamp(1 − deviation / SCATTER_QUALITY_WINDOW, 0, 1)
+ *   baseScatter  = lerp(MAX_SCATTER_TILES, MIN_SCATTER_TILES, quality)
+ *   After D-052 lure-weight mismatch check: scatter *= MISMATCH_SCATTER_MULTIPLIER.
  *
- *   Mitigation factor (set at Tap 4, close wind window):
- *     reference   = Tap3.atMs − Tap1.atMs  (the backswing window the player just set)
- *     window      = Tap4.atMs − Tap2.atMs  (how long the player held the spacebar window)
- *     deviation   = |window − reference|
- *     quality     = clamp(1 − deviation / MITIGATION_MATCH_WINDOW_MS, 0, 1)
- *     mitigFactor = quality  (0 = no reduction, 1 = full 80% reduction)
- *     Wind reduction applied = mitigFactor × 0.80  (D-014: perfect = 80%, not 100%)
+ * ── Mitigation Math (D-014 rev: metronome-anchored) ──────────────────────────
  *
- *   Landing offset:
- *     windStrength = _windAtCast.intensityMs × WIND_DRIFT_SCALE
- *     windReduced  = windStrength × (1 − mitigFactor × 0.80)
- *     windDrift    = { dx: windVec.dx × windReduced, dy: windVec.dy × windReduced }
- *     scatterAngle = rngStream('cast').next() × 2π
- *     scatterMag   = rngStream('cast').next() × scatterRadius
- *     scatter      = { dx: cos(angle)×mag, dy: sin(angle)×mag }
- *     landing      = target.offset + windDrift + scatter
- *     D-016 clamp: if |landing| > poi.frameRadius → scale landing to frameRadius
+ *   relTap2 = _tap2AtMs − phase1StartAtMs   (offset into Phase-1 metronome)
+ *   relTap4 = _tap4AtMs − phase3StartAtMs   (offset into Phase-3 metronome)
+ *   If either Spacebar was missed → mitigation = 0 (D-014 rev).
+ *   Otherwise:
+ *     deviation    = |relTap4 − relTap2|
+ *     quality      = clamp(1 − deviation / MITIGATION_MATCH_WINDOW_MS, 0, 1)
+ *     mitigFactor  = quality       (0 = no reduction, 1 = full 80% reduction)
+ *   Wind reduction applied = mitigFactor × 0.80 (D-014: perfect = 80%, not 100%).
  *
  * ── Splash Kind → Spook (D-014, D-038) ──────────────────────────────────────
  *
@@ -98,40 +105,43 @@
  *   NORMAL : accuracy ≥ SPLASH_NORMAL_THRESHOLD  (0.35) → spook increment = +1
  *   LOUD   : accuracy < SPLASH_NORMAL_THRESHOLD          → spook increment = +3
  *
- * ── Mismatched-Lure Scatter Penalty (D-052) ──────────────────────────────────
+ * ── Audio Events (D-021 v1.14 addendum) ──────────────────────────────────────
  *
- *   Reads the first rod and first lure from state.tournament.activeTackle.
- *   If lure.weightOz < rod.lureWeightRangeOz.min
- *      OR lure.weightOz > rod.lureWeightRangeOz.max:
- *     scatterRadius *= MISMATCH_SCATTER_MULTIPLIER (2.0)
- *   No cast distance penalty (D-052). No Bird's Nest forced (D-052).
+ *   AUDIO_METRONOME_TICK { phase, beatIndex, totalBeats, atMs }
+ *     — emitted on each beat of PHASE_1 and PHASE_3 metronomes.
+ *     Consumed exclusively by audio/synthGraph.js.
+ *
+ *   AUDIO_PITCH_SWEEP { phase, direction: 'UP'|'DOWN', durationMs, atMs }
+ *     — emitted on entry to PHASE_2 (UP) and PHASE_4 (DOWN).
+ *     Sweep duration is the whiff window (ARROW_WHIFF_TIMEOUT_MS).
+ *
+ *   castPipeline NEVER imports any audio module.  All audio coupling is bus-only.
  *
  * ── Spool Wall (D-016) ───────────────────────────────────────────────────────
  *
- *   If |landing| > poi.frameRadius: landing is scaled to exactly frameRadius,
- *   preserving direction. The lure drops straight down at the boundary.
- *   Spook is applied at the clamped coordinate, not the intended landing.
+ *   If |landing| > poi.frameRadius: landing is scaled to exactly frameRadius.
+ *   The lure drops straight down at the boundary.  Spook is applied at the
+ *   clamped coordinate, not the intended landing.
  *
  * ── Scan Lock (D-043) ────────────────────────────────────────────────────────
  *
- *   SCAN_LOCKED dispatched on TARGET_LOCKED received (entering BACKSWING).
+ *   SCAN_LOCKED dispatched on TARGET_LOCKED received (entering ARMED).
  *   SCAN_UNLOCKED dispatched on CAST_LANDED and on CAST_BIRDS_NEST.
  *   SCAN_UNLOCKED also dispatched in onUnmount if the pipeline was mid-cast.
  *
  * ── Events Emitted ───────────────────────────────────────────────────────────
  *
- *   CAST_PHASE_CHANGED  { cast: { phase, ...extra } | null, atMs }
- *     — emitted on bus AND dispatched to stateStore on every phase transition.
+ *   CAST_PHASE_CHANGED   { cast: { phase, ...extra } | null, atMs }
+ *   AUDIO_METRONOME_TICK { phase, beatIndex, totalBeats, atMs }
+ *   AUDIO_PITCH_SWEEP    { phase, direction, durationMs, atMs }
+ *   CAST_BIRDS_NEST      { nestDurationMs, phase, atMs }
+ *   CAST_LANDED          { poiId, candidateId, finderTier, landing, target,
+ *                          splashKind, scatterRadius, mitigationFactor, atMs }
  *
- *   CAST_BIRDS_NEST     { nestDurationMs, phase, atMs }
- *     — emitted when the inter-tap timer fires.
- *
- *   CAST_LANDED         { poiId, candidateId, finderTier, landing, target,
- *                         splashKind, scatterRadius, mitigationFactor, atMs }
- *     — emitted when Tap 5 completes. Consumed by fish/fishBehavior (Phase 6).
- *
- * H-005 note: All _unsubs and the _nestHandle are cancelled in onUnmount.
+ * H-005 note: All _unsubs, _whiffHandle, _metronomeEndHandle, and _metronomeTickHandle
+ *             are cancelled in onUnmount.
  * H-014 note: This module does NOT import fishFinder.js or targetSelector.js.
+ * D-021 note: This module does NOT import any audio module.
  */
 
 import * as bus            from '../core/eventBus.js';
@@ -150,10 +160,11 @@ import * as castSpookModel from './castSpookModel.js';
 // ---------------------------------------------------------------------------
 
 /**
- * Maximum milliseconds between consecutive taps before a Bird's Nest fires (D-015).
- * Applied from TARGET_LOCKED → Tap1, and between every subsequent tap pair.
+ * Bird's Nest fires if the expected ARROW tap does not arrive within this
+ * window (D-015 v1.14). Active only during ARMED, PHASE_2_ACCURACY,
+ * and PHASE_4_IMPACT. Spacebar misses do NOT consult this timer.
  */
-const INTER_TAP_TIMEOUT_MS = 3_000;
+const ARROW_WHIFF_TIMEOUT_MS = 3_000;
 
 /** Minimum Bird's Nest lockout duration in ms (D-015). */
 const BIRDS_NEST_MIN_MS = 10_000;
@@ -162,17 +173,26 @@ const BIRDS_NEST_MIN_MS = 10_000;
 const BIRDS_NEST_MAX_MS = 15_000;
 
 /**
- * Ideal Tap1→Tap3 backswing duration in ms.
- * Timing the apex (Tap3) exactly this long after the backswing start (Tap1)
- * yields zero scatter quality penalty (maximum accuracy).
+ * Fixed-duration metronome length for PHASE_1 and PHASE_3 (D-014 v1.14).
+ * D-070 mandates a 2500 ms accessibility floor for cognitive reaction time.
  */
-const IDEAL_BACKSWING_MS = 600;
+const CAST_PHASE_MIN_MS = 2_500;
+
+/** Total metronome beats emitted across CAST_PHASE_MIN_MS (4 beats = 625 ms apart). */
+const METRONOME_BEAT_COUNT = 4;
 
 /**
- * Maximum deviation from IDEAL_BACKSWING_MS before scatter quality hits 0.
- * A deviation of SCATTER_QUALITY_WINDOW ms produces the worst-case scatter.
+ * Ideal Phase-2 reaction time in ms. Tapping ARROW_UP this many ms after
+ * the rising pitch sweep starts yields perfect scatter quality.
  */
-const SCATTER_QUALITY_WINDOW = 800;
+const IDEAL_REACTION_MS = 500;
+
+/**
+ * Maximum deviation from IDEAL_REACTION_MS before scatter quality hits 0.
+ * Tuned wider than the original free-rhythm window because the player is
+ * reacting to an audio cue rather than internal timing.
+ */
+const SCATTER_QUALITY_WINDOW = 1_500;
 
 /** Minimum scatter radius in tiles (perfect timing, no mismatch penalty). */
 const MIN_SCATTER_TILES = 0.05;
@@ -181,34 +201,24 @@ const MIN_SCATTER_TILES = 0.05;
 const MAX_SCATTER_TILES = 2.5;
 
 /**
- * Maximum deviation of (Tap2→Tap4) from (Tap1→Tap3) before mitigation quality
- * hits 0. Deviations above this produce zero wind reduction.
+ * Maximum deviation between (Tap2 offset into Phase-1 metronome) and
+ * (Tap4 offset into Phase-3 metronome) before mitigation quality hits 0.
  */
 const MITIGATION_MATCH_WINDOW_MS = 600;
 
 /**
- * Scatter multiplier applied when the lure weight is outside the rod's rated
- * weight range (D-052). Applied multiplicatively on top of the timing scatter.
+ * Scatter multiplier applied when lure weight is outside the rod's rated
+ * range (D-052). Accuracy-only penalty; no distance penalty, no Bird's Nest.
  */
 const MISMATCH_SCATTER_MULTIPLIER = 2.0;
 
-/**
- * Wind drift scale: converts wind intensity (m/s from wind.sample()) to tile drift
- * at 100% wind (0% mitigation). At max wind (~6 m/s) the cast drifts ~1.5 tiles.
- * Tuned to match navigation.js WIND_DRIFT_SCALE for perceptual consistency.
- */
-const WIND_DRIFT_SCALE = 0.25; // tiles per m/s
+/** Wind drift scale: tiles of drift per (m/s of wind) at 0% mitigation. */
+const WIND_DRIFT_SCALE = 0.25;
 
-/**
- * Accuracy threshold above which the splash is SILENT (spook increment = 0, D-038).
- * accuracy = 1 - clamp(scatterRadius / MAX_SCATTER_TILES, 0, 1)
- */
+/** Accuracy threshold above which the splash is SILENT (spook +0, D-038). */
 const SPLASH_SILENT_THRESHOLD = 0.75;
 
-/**
- * Accuracy threshold above which the splash is NORMAL (+1 spook).
- * Below this threshold the splash is LOUD (+3 spook).
- */
+/** Accuracy threshold above which the splash is NORMAL (+1 spook); below = LOUD (+3). */
 const SPLASH_NORMAL_THRESHOLD = 0.35;
 
 // ---------------------------------------------------------------------------
@@ -217,7 +227,7 @@ const SPLASH_NORMAL_THRESHOLD = 0.35;
 
 /**
  * Current FSM phase.
- * @type {'IDLE'|'BACKSWING'|'POWER'|'APEX'|'RELEASE'|'SPLASHDOWN'}
+ * @type {'IDLE'|'ARMED'|'PHASE_1_METRONOME'|'PHASE_2_ACCURACY'|'PHASE_3_METRONOME'|'PHASE_4_IMPACT'}
  */
 let _phase = 'IDLE';
 
@@ -233,30 +243,34 @@ let _target = null;
  */
 let _windAtCast = null;
 
-/** Tournament-clock timestamp of Tap 1 (Arrow, Backswing start). @type {number|null} */
+/** Tap 1 — ARROW_UP that starts PHASE_1 metronome. Equals phase1StartAtMs. */
 let _tap1AtMs = null;
-
-/** Tournament-clock timestamp of Tap 2 (Spacebar, open Wind Mitigation). @type {number|null} */
+/** Tap 2 — optional SPACEBAR during PHASE_1.  null if missed (→ 0% mitigation). */
 let _tap2AtMs = null;
-
-/** Tournament-clock timestamp of Tap 3 (Arrow, Apex / scatter set). @type {number|null} */
+/** Tap 3 — ARROW_UP that locks accuracy and starts PHASE_3 metronome. Equals phase3StartAtMs. */
 let _tap3AtMs = null;
-
-/** Tournament-clock timestamp of Tap 4 (Spacebar, close Wind Mitigation). @type {number|null} */
+/** Tap 4 — optional SPACEBAR during PHASE_3.  null if missed (→ 0% mitigation). */
 let _tap4AtMs = null;
 
-/** Computed scatter radius in tiles, set at Tap 3. @type {number} */
+/** When PHASE_2_ACCURACY started (basis for reaction-based scatter math). */
+let _phase2StartAtMs = null;
+/** When PHASE_4_IMPACT started (recorded for diagnostic completeness). */
+let _phase4StartAtMs = null;
+
+/** Computed scatter radius in tiles, set at Tap 3. */
 let _scatterRadius = 0;
 
-/** Computed mitigation factor [0,1], set at Tap 4. @type {number} */
+/** Computed mitigation factor [0,1], set at Tap 5 just before landing. */
 let _mitigationFactor = 0;
 
-/**
- * Clock handle for the inter-tap Bird's Nest timer.
- * Cancelled on each successful tap; null when idle.
- * @type {number|null}
- */
-let _nestHandle = null;
+/** Clock handle for the arrow whiff (Bird's Nest) timer.  Null when inactive. */
+let _whiffHandle = null;
+
+/** Clock handle for the end-of-metronome auto-transition.  Null when inactive. */
+let _metronomeEndHandle = null;
+
+/** Array of clock handles for per-beat AUDIO_METRONOME_TICK emissions. */
+let _metronomeTickHandles = [];
 
 /**
  * Lazy-initialised RNG stream for cast scatter and Bird's Nest duration (§5d).
@@ -267,7 +281,6 @@ let _castRng = null;
 
 /**
  * Bus unsubscribe functions acquired in onMount.
- * All must be called in onUnmount (H-005).
  * @type {Array<Function>}
  */
 let _unsubs = [];
@@ -276,55 +289,50 @@ let _unsubs = [];
 // RNG helper
 // ---------------------------------------------------------------------------
 
-/**
- * Returns the cast RNG stream, initialising it on first call.
- * Lazy init ensures rng.seed() has been called by engine.boot() before the
- * first cast stream is derived.
- *
- * @returns {{ next():number, int(min:number,max:number):number }}
- */
 function _getRng() {
   if (!_castRng) _castRng = rng.rngStream('cast');
   return _castRng;
 }
 
 // ---------------------------------------------------------------------------
-// Bird's Nest timer management (D-015)
+// Arrow whiff (Bird's Nest) timer management (D-015 v1.14)
 // ---------------------------------------------------------------------------
 
-/** Schedule a Bird's Nest timer for INTER_TAP_TIMEOUT_MS from now. */
-function _scheduleBirdNest() {
-  _cancelBirdNest();
-  _nestHandle = clock.schedule(INTER_TAP_TIMEOUT_MS, _fireBirdNest);
+/**
+ * Schedule an arrow whiff timer for ARROW_WHIFF_TIMEOUT_MS from now.
+ * Called on entry to every arrow-expecting phase (ARMED, PHASE_2, PHASE_4).
+ */
+function _scheduleWhiff() {
+  _cancelWhiff();
+  _whiffHandle = clock.schedule(ARROW_WHIFF_TIMEOUT_MS, _fireBirdNest);
 }
 
-/** Cancel any pending Bird's Nest timer. No-op when no timer is active. */
-function _cancelBirdNest() {
-  if (_nestHandle !== null) {
-    clock.cancel(_nestHandle);
-    _nestHandle = null;
+function _cancelWhiff() {
+  if (_whiffHandle !== null) {
+    clock.cancel(_whiffHandle);
+    _whiffHandle = null;
   }
 }
 
 /**
- * Called by the clock.schedule callback when the inter-tap timeout elapses.
+ * Fires when an arrow whiff timer elapses (Bird's Nest penalty).
  *
- * D-015: the penalty is an input lockout of 10–15 s. The world clock continues
- * to run during the lockout (D-013). The lockout duration is randomly drawn
- * from [BIRDS_NEST_MIN_MS, BIRDS_NEST_MAX_MS] to prevent exploitable patterns.
+ * D-015 v1.14: the penalty is an input lockout of 10–15 s. World clock
+ * continues to run. Lockout duration is randomised to prevent exploitable
+ * patterns. D-030: inputAdapter.lock() emits forced INPUT_*_UP events for
+ * held inputs — no hold-state leaks.
  *
- * D-030: inputAdapter.lock() will emit forced INPUT_*_UP events for any held
- * inputs at the moment of locking — no hold-state leaks.
- *
- * @param {number} atMs — the clock time at which the timer fires
+ * @param {number} atMs — clock time at which the timer fired
  */
 function _fireBirdNest(atMs) {
-  _nestHandle = null; // already fired; no cancel needed
+  _whiffHandle = null;
+
+  // Stop any metronome / pitch sweep activity so audio isn't left running.
+  _cancelMetronomeTimers();
 
   const nestDurationMs = _getRng().int(BIRDS_NEST_MIN_MS, BIRDS_NEST_MAX_MS);
   const prevPhase      = _phase;
 
-  // Engage the physical input lockout (D-015, D-030).
   inputAdapter.lock('BIRDS_NEST', nestDurationMs);
 
   bus.emit('CAST_BIRDS_NEST', {
@@ -337,12 +345,116 @@ function _fireBirdNest(atMs) {
 }
 
 // ---------------------------------------------------------------------------
+// Metronome / pitch-sweep timer management (D-014 rev, D-021 addendum)
+// ---------------------------------------------------------------------------
+
+/**
+ * Start the fixed-duration metronome for PHASE_1 or PHASE_3.
+ *
+ * Schedules:
+ *   • Per-beat AUDIO_METRONOME_TICK emissions (METRONOME_BEAT_COUNT beats).
+ *   • End-of-phase auto-transition via _onMetronomeEnd.
+ *
+ * @param {'PHASE_1_METRONOME'|'PHASE_3_METRONOME'} phase
+ */
+function _startMetronome(phase) {
+  _cancelMetronomeTimers();
+
+  const beatIntervalMs = CAST_PHASE_MIN_MS / METRONOME_BEAT_COUNT;
+
+  // Beat 0 fires immediately so the player hears the metronome start.
+  bus.emit('AUDIO_METRONOME_TICK', {
+    phase,
+    beatIndex:  0,
+    totalBeats: METRONOME_BEAT_COUNT,
+    atMs:       clock.nowMs(),
+  });
+
+  // Beats 1..N-1 scheduled via clock.schedule.
+  for (let i = 1; i < METRONOME_BEAT_COUNT; i++) {
+    const handle = clock.schedule(beatIntervalMs * i, (firedAtMs) => {
+      bus.emit('AUDIO_METRONOME_TICK', {
+        phase,
+        beatIndex:  i,
+        totalBeats: METRONOME_BEAT_COUNT,
+        atMs:       firedAtMs,
+      });
+    });
+    _metronomeTickHandles.push(handle);
+  }
+
+  // End of metronome — auto-advance to the next phase.
+  _metronomeEndHandle = clock.schedule(CAST_PHASE_MIN_MS, _onMetronomeEnd);
+}
+
+/** Cancel every scheduled metronome / tick handle. Safe when idle. */
+function _cancelMetronomeTimers() {
+  if (_metronomeEndHandle !== null) {
+    clock.cancel(_metronomeEndHandle);
+    _metronomeEndHandle = null;
+  }
+  for (const h of _metronomeTickHandles) clock.cancel(h);
+  _metronomeTickHandles = [];
+}
+
+/**
+ * Called when the PHASE_1 or PHASE_3 metronome completes its full duration.
+ * Auto-advances to the corresponding sweep phase (PHASE_2 or PHASE_4) and
+ * emits AUDIO_PITCH_SWEEP for synthGraph.
+ *
+ * @param {number} atMs
+ */
+function _onMetronomeEnd(atMs) {
+  _metronomeEndHandle = null;
+
+  if (_phase === 'PHASE_1_METRONOME') {
+    _phase2StartAtMs = atMs;
+    _phase = 'PHASE_2_ACCURACY';
+
+    bus.emit('AUDIO_PITCH_SWEEP', {
+      phase:      'PHASE_2_ACCURACY',
+      direction:  'UP',
+      durationMs: ARROW_WHIFF_TIMEOUT_MS,
+      atMs,
+    });
+
+    _dispatchPhase({
+      phase:           'PHASE_2_ACCURACY',
+      phase2StartAtMs: _phase2StartAtMs,
+      atMs,
+    });
+
+    // Arm whiff timer for Tap 3 (ARROW_UP).
+    _scheduleWhiff();
+
+  } else if (_phase === 'PHASE_3_METRONOME') {
+    _phase4StartAtMs = atMs;
+    _phase = 'PHASE_4_IMPACT';
+
+    bus.emit('AUDIO_PITCH_SWEEP', {
+      phase:      'PHASE_4_IMPACT',
+      direction:  'DOWN',
+      durationMs: ARROW_WHIFF_TIMEOUT_MS,
+      atMs,
+    });
+
+    _dispatchPhase({
+      phase:           'PHASE_4_IMPACT',
+      phase4StartAtMs: _phase4StartAtMs,
+      atMs,
+    });
+
+    // Arm whiff timer for Tap 5 (ARROW_DOWN).
+    _scheduleWhiff();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Phase helpers
 // ---------------------------------------------------------------------------
 
 /**
  * Dispatch CAST_PHASE_CHANGED to stateStore and emit the matching bus event.
- * Keeps the two in sync so UI and audio receive consistent state.
  *
  * @param {{ phase: string, [key:string]: * } | null} castObj — null when IDLE
  */
@@ -357,14 +469,12 @@ function _dispatchPhase(castObj) {
   });
 }
 
-/**
- * Reset FSM state to IDLE and dispatch CAST_PHASE_CHANGED + SCAN_UNLOCKED.
- * Called after a successful cast AND after a Bird's Nest penalty.
- *
- * Safe to call from IDLE (no-op on the scan unlock if never locked).
- */
+/** Reset FSM state and unlock scan if mid-cast. */
 function _resetToIdle() {
   const wasActive = _phase !== 'IDLE';
+
+  _cancelWhiff();
+  _cancelMetronomeTimers();
 
   _phase            = 'IDLE';
   _target           = null;
@@ -373,38 +483,37 @@ function _resetToIdle() {
   _tap2AtMs         = null;
   _tap3AtMs         = null;
   _tap4AtMs         = null;
+  _phase2StartAtMs  = null;
+  _phase4StartAtMs  = null;
   _scatterRadius    = 0;
   _mitigationFactor = 0;
 
   _dispatchPhase(null);
 
-  // Only unlock the scan if this reset is coming from a non-IDLE state
-  // (i.e., we actually locked it in the first place).
   if (wasActive) {
     stateStore.dispatch({ type: 'SCAN_UNLOCKED' });
   }
 }
 
 // ---------------------------------------------------------------------------
-// Scatter & Mitigation math
+// Scatter & Mitigation math (D-014 v1.14)
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the scatter radius in tiles based on Tap1→Tap3 backswing timing
- * quality and the optional D-052 lure-weight mismatch penalty.
+ * Scatter radius in tiles based on Phase-2 reaction time (Tap 3 latency
+ * relative to the rising pitch sweep start) plus optional D-052 lure-
+ * weight mismatch penalty.
  *
  * @returns {number} scatter radius in tiles, ≥ MIN_SCATTER_TILES
  */
 function _computeScatterRadius() {
-  const elapsed   = _tap3AtMs - _tap1AtMs;
-  const deviation = Math.abs(elapsed - IDEAL_BACKSWING_MS);
-  const quality   = Math.max(0, 1 - deviation / SCATTER_QUALITY_WINDOW);
+  const reactionMs = _tap3AtMs - _phase2StartAtMs;
+  const deviation  = Math.abs(reactionMs - IDEAL_REACTION_MS);
+  const quality    = Math.max(0, 1 - deviation / SCATTER_QUALITY_WINDOW);
 
-  // Lerp: quality=1 → MIN_SCATTER, quality=0 → MAX_SCATTER
+  // Lerp: quality=1 → MIN_SCATTER, quality=0 → MAX_SCATTER.
   let scatter = MIN_SCATTER_TILES + (1 - quality) * (MAX_SCATTER_TILES - MIN_SCATTER_TILES);
 
-  // D-052: mismatched lure weight doubles the scatter circle.
-  // No distance penalty, no forced Bird's Nest (D-052 is accuracy-only).
   if (_isLureWeightMismatched()) {
     scatter = Math.min(MAX_SCATTER_TILES, scatter * MISMATCH_SCATTER_MULTIPLIER);
   }
@@ -413,27 +522,29 @@ function _computeScatterRadius() {
 }
 
 /**
- * Compute the wind-mitigation factor based on how well the player matched the
- * Tap2→Tap4 window duration to the Tap1→Tap3 backswing duration.
+ * Wind-mitigation factor based on how well the player matched the Spacebar
+ * timing across the two metronomes (D-014 v1.14).
  *
- * D-014: "duration match vs Tap1→Tap3 sets mitigation 0..1, perfect = 80% wind reduction"
+ * Returns 0 if either Spacebar was missed (D-014 rev).
  *
  * @returns {number} mitigation factor in [0, 1]
  */
 function _computeMitigationFactor() {
-  const reference = _tap3AtMs - _tap1AtMs;  // backswing window
-  const window    = _tap4AtMs - _tap2AtMs;  // player's mitigation window
-  const deviation = Math.abs(window - reference);
+  if (_tap2AtMs === null || _tap4AtMs === null) {
+    return 0;
+  }
+
+  const relTap2   = _tap2AtMs - _tap1AtMs; // offset into Phase-1 metronome
+  const relTap4   = _tap4AtMs - _tap3AtMs; // offset into Phase-3 metronome
+  const deviation = Math.abs(relTap4 - relTap2);
 
   return Math.max(0, 1 - deviation / MITIGATION_MATCH_WINDOW_MS);
 }
 
 /**
- * Returns true if the first lure in the active loadout is outside the rated
- * weight range of the first rod in the active loadout (D-052).
- *
- * Falls back to false on any error (missing data, catalog miss) so a missing
- * loadout entry never crashes the cast.
+ * True if the first lure in the active loadout is outside the rated weight
+ * range of the first rod (D-052). Defensive: falls back to false on any
+ * missing-data error.
  *
  * @returns {boolean}
  */
@@ -459,13 +570,7 @@ function _isLureWeightMismatched() {
 }
 
 /**
- * Determine the splash kind from the current scatter accuracy (D-014, D-038).
- *
- * accuracy = 1 − clamp(scatterRadius / MAX_SCATTER_TILES, 0, 1)
- * SILENT (accuracy > 0.75) → spook +0
- * NORMAL (accuracy ≥ 0.35) → spook +1
- * LOUD   (accuracy < 0.35) → spook +3
- *
+ * Splash kind from current scatter accuracy (D-014, D-038).
  * @returns {'SILENT'|'NORMAL'|'LOUD'}
  */
 function _determineSplashKind() {
@@ -479,23 +584,9 @@ function _determineSplashKind() {
 // Landing offset computation (D-011, D-012, D-016)
 // ---------------------------------------------------------------------------
 
-/**
- * Compute the final landing offset in POI-frame coordinates.
- *
- * D-011: Target offset anchored at TARGET_LOCKED; boat drift during flight
- *        does NOT shift the landing target. Wind does (D-012).
- * D-012: Wind vector was sampled at TARGET_LOCKED and held constant.
- * D-016: If the computed landing exceeds frameRadius, it is clamped to the
- *        boundary (the lure drops straight down at the spool wall).
- *
- * @param {number} frameRadius — the active POI's frameRadius in tiles
- * @returns {{ dx: number, dy: number }} landing offset in POI frame
- */
 function _computeLanding(frameRadius) {
   const rngStream = _getRng();
 
-  // ── Wind drift ────────────────────────────────────────────────────────────
-  // windReduction = mitigationFactor × 0.80 (D-014: perfect = 80%, not 100%)
   const windStrength  = (_windAtCast.intensityMs ?? 0) * WIND_DRIFT_SCALE;
   const windReduction = _mitigationFactor * 0.80;
   const effectiveWind = windStrength * (1 - windReduction);
@@ -505,7 +596,6 @@ function _computeLanding(frameRadius) {
     dy: (_windAtCast.dy ?? 0) * effectiveWind,
   };
 
-  // ── Random scatter within scatter circle ──────────────────────────────────
   const scatterAngle = rngStream.next() * 2 * Math.PI;
   const scatterMag   = rngStream.next() * _scatterRadius;
 
@@ -514,13 +604,12 @@ function _computeLanding(frameRadius) {
     dy: Math.sin(scatterAngle) * scatterMag,
   };
 
-  // ── Raw landing = target + wind drift + scatter ───────────────────────────
   const landing = {
     dx: (_target.offset.dx ?? 0) + windDrift.dx + scatter.dx,
     dy: (_target.offset.dy ?? 0) + windDrift.dy + scatter.dy,
   };
 
-  // ── D-016 Spool Wall — clamp to frameRadius ───────────────────────────────
+  // D-016 Spool Wall — clamp to frameRadius.
   const dist = Math.hypot(landing.dx, landing.dy);
   if (dist > frameRadius) {
     const scale = frameRadius / dist;
@@ -531,12 +620,6 @@ function _computeLanding(frameRadius) {
   return landing;
 }
 
-/**
- * Resolve the active POI's frameRadius from the POI graph.
- * Falls back to 10 if the POI is unknown (defensive default).
- *
- * @returns {number}
- */
 function _getFrameRadius() {
   try {
     const poiId = stateStore.getState().session?.player?.currentPoiId ?? _target?.poiId;
@@ -548,12 +631,6 @@ function _getFrameRadius() {
   }
 }
 
-/**
- * Resolve the center coordinate of the active POI.
- * Returns null if unavailable.
- *
- * @returns {{ x: number, y: number } | null}
- */
 function _getPoiCenter() {
   try {
     const poiId = stateStore.getState().session?.player?.currentPoiId ?? _target?.poiId;
@@ -570,29 +647,22 @@ function _getPoiCenter() {
 // ---------------------------------------------------------------------------
 
 /**
- * TARGET_LOCKED handler (emitted by targetSelector after player confirms).
+ * TARGET_LOCKED handler — IDLE → ARMED.
  *
  * D-011: anchors the cast target in POI-frame coordinates.
  * D-012: samples and holds the wind vector for the entire cast flight.
  * D-043: sets state.tournament.scanLocked so fishFinder blocks new scans.
  *
- * Transitions FSM from IDLE → BACKSWING.
- * Starts the Bird's Nest inter-tap timer.
- *
- * @param {{ poiId:string, offset:{dx:number,dy:number}, candidateId:string,
- *           lockedAtMs:number, finderTier:string }} evt
+ * Starts the arrow whiff timer (awaiting Tap 1 ARROW_UP).
  */
 function _onTargetLocked(evt) {
   if (_phase !== 'IDLE') {
-    // Already mid-cast: a second TARGET_LOCKED is ignored.
-    // (Should not normally occur — scanLocked blocks new scans while casting.)
     console.warn('[castPipeline] TARGET_LOCKED received mid-cast; ignoring.');
     return;
   }
 
   const atMs = evt.lockedAtMs ?? clock.nowMs();
 
-  // D-011: anchor target coordinates.
   _target = {
     poiId:       evt.poiId,
     offset:      { dx: evt.offset?.dx ?? 0, dy: evt.offset?.dy ?? 0 },
@@ -600,7 +670,6 @@ function _onTargetLocked(evt) {
     finderTier:  evt.finderTier,
   };
 
-  // D-012: sample wind vector at this exact moment; hold for full flight.
   const windSample = wind.sample(atMs);
   _windAtCast = {
     dx:          windSample.dx,
@@ -608,97 +677,115 @@ function _onTargetLocked(evt) {
     intensityMs: windSample.intensityMs,
   };
 
-  // D-043: lock out scanning while cast is in progress.
   stateStore.dispatch({ type: 'SCAN_LOCKED' });
 
-  // Transition to BACKSWING and announce to state/audio.
-  _phase = 'BACKSWING';
-  _dispatchPhase({ phase: 'BACKSWING', target: _target, atMs });
+  _phase = 'ARMED';
+  _dispatchPhase({ phase: 'ARMED', target: _target, atMs });
 
-  // Start inter-tap timer (Bird's Nest if Tap 1 doesn't arrive in time).
-  _scheduleBirdNest();
+  _scheduleWhiff();
 }
 
 /**
- * Arrow tap handler (Taps 1, 3, 5 in the D-014 sequence).
- * Accepts any arrow direction: ARROW_UP, ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT.
+ * ARROW_UP tap handler — Taps 1 and 3 in the D-014 v1.14 sequence.
  *
  * @param {{ atMs?: number }} evt
  */
-function _onArrow(evt) {
+function _onArrowUp(evt) {
   const atMs = evt.atMs ?? clock.nowMs();
 
   switch (_phase) {
 
-    // ── Tap 1: Backswing ───────────────────────────────────────────────────
-    case 'BACKSWING': {
-      _cancelBirdNest();
+    // ── Tap 1: Start PHASE_1 metronome ─────────────────────────────────────
+    case 'ARMED': {
+      _cancelWhiff();
       _tap1AtMs = atMs;
-      _phase    = 'POWER';
-      _dispatchPhase({ phase: 'POWER', tap1AtMs: _tap1AtMs, atMs });
-      _scheduleBirdNest();
+      _phase    = 'PHASE_1_METRONOME';
+      _dispatchPhase({
+        phase:           'PHASE_1_METRONOME',
+        phase1StartAtMs: _tap1AtMs,
+        durationMs:      CAST_PHASE_MIN_MS,
+        atMs,
+      });
+      _startMetronome('PHASE_1_METRONOME');
       break;
     }
 
-    // ── Tap 3: Apex — sets scatter circle radius ───────────────────────────
-    case 'APEX': {
-      _cancelBirdNest();
+    // ── Tap 3: Lock accuracy, start PHASE_3 metronome ──────────────────────
+    case 'PHASE_2_ACCURACY': {
+      _cancelWhiff();
       _tap3AtMs      = atMs;
       _scatterRadius = _computeScatterRadius();
-      _phase         = 'RELEASE';
+      _phase         = 'PHASE_3_METRONOME';
       _dispatchPhase({
-        phase:         'RELEASE',
-        tap3AtMs:      _tap3AtMs,
-        scatterRadius: _scatterRadius,
+        phase:           'PHASE_3_METRONOME',
+        phase3StartAtMs: _tap3AtMs,
+        scatterRadius:   _scatterRadius,
+        durationMs:      CAST_PHASE_MIN_MS,
         atMs,
       });
-      _scheduleBirdNest();
-      break;
-    }
-
-    // ── Tap 5: Splashdown — compute and apply landing ──────────────────────
-    case 'SPLASHDOWN': {
-      _cancelBirdNest();
-
-      const frameRadius = _getFrameRadius();
-      const landing     = _computeLanding(frameRadius);
-      const splashKind  = _determineSplashKind();
-
-      // Apply spook to the landing tile (H-003: sole write path through castSpookModel).
-      const poiCenter = _getPoiCenter();
-      if (poiCenter) {
-        const tileCoord = {
-          x: poiCenter.x + Math.round(landing.dx),
-          y: poiCenter.y + Math.round(landing.dy),
-        };
-        castSpookModel.applySplash(tileCoord, splashKind, atMs);
-      }
-
-      // Emit CAST_LANDED for downstream consumers (fishBehavior Phase 6, pressureModel).
-      bus.emit('CAST_LANDED', {
-        poiId:            _target.poiId,
-        candidateId:      _target.candidateId,
-        finderTier:       _target.finderTier,
-        landing,
-        target:           { ..._target.offset },
-        splashKind,
-        scatterRadius:    _scatterRadius,
-        mitigationFactor: _mitigationFactor,
-        atMs,
-      });
-
-      _resetToIdle();
+      _startMetronome('PHASE_3_METRONOME');
       break;
     }
 
     default:
-      // Not in an arrow-expecting phase — ignore (no-op).
+      // No-op in other phases.  Spacebar misses are silent (D-015 rev);
+      // ARROW_UP mis-presses are likewise silent — the only failure mode
+      // is a whiff timeout (handled by _fireBirdNest).
       break;
   }
 }
 
 /**
- * Spacebar tap handler (Taps 2 and 4 in the D-014 sequence).
+ * ARROW_DOWN tap handler — Tap 5 (Splashdown) only.
+ *
+ * @param {{ atMs?: number }} evt
+ */
+function _onArrowDown(evt) {
+  const atMs = evt.atMs ?? clock.nowMs();
+
+  if (_phase !== 'PHASE_4_IMPACT') return;
+
+  _cancelWhiff();
+
+  // Final mitigation computed here (after both metronomes have run and
+  // Spacebar taps, if any, were recorded during PHASE_1 and PHASE_3).
+  _mitigationFactor = _computeMitigationFactor();
+
+  const frameRadius = _getFrameRadius();
+  const landing     = _computeLanding(frameRadius);
+  const splashKind  = _determineSplashKind();
+
+  // Apply spook on the landing tile (H-003: sole write through castSpookModel).
+  const poiCenter = _getPoiCenter();
+  if (poiCenter) {
+    const tileCoord = {
+      x: poiCenter.x + Math.round(landing.dx),
+      y: poiCenter.y + Math.round(landing.dy),
+    };
+    castSpookModel.applySplash(tileCoord, splashKind, atMs);
+  }
+
+  bus.emit('CAST_LANDED', {
+    poiId:            _target.poiId,
+    candidateId:      _target.candidateId,
+    finderTier:       _target.finderTier,
+    landing,
+    target:           { ..._target.offset },
+    splashKind,
+    scatterRadius:    _scatterRadius,
+    mitigationFactor: _mitigationFactor,
+    atMs,
+  });
+
+  _resetToIdle();
+}
+
+/**
+ * SPACEBAR tap handler — Taps 2 and 4 (optional, wind-mitigation timing).
+ *
+ * Only the FIRST Spacebar tap in each metronome phase is recorded; subsequent
+ * taps in the same phase are silently ignored.  Missing the Spacebar entirely
+ * is silent (D-015 rev): mitigation will resolve to 0 in _computeMitigationFactor.
  *
  * @param {{ atMs?: number }} evt
  */
@@ -707,34 +794,35 @@ function _onSpacebar(evt) {
 
   switch (_phase) {
 
-    // ── Tap 2: Open Wind Mitigation timer ─────────────────────────────────
-    case 'POWER': {
-      _cancelBirdNest();
-      _tap2AtMs = atMs;
-      _phase    = 'APEX';
-      _dispatchPhase({ phase: 'APEX', tap2AtMs: _tap2AtMs, atMs });
-      _scheduleBirdNest();
+    case 'PHASE_1_METRONOME':
+      if (_tap2AtMs === null) {
+        _tap2AtMs = atMs;
+        _dispatchPhase({
+          phase:           'PHASE_1_METRONOME',
+          phase1StartAtMs: _tap1AtMs,
+          tap2AtMs:        _tap2AtMs,
+          durationMs:      CAST_PHASE_MIN_MS,
+          atMs,
+        });
+      }
       break;
-    }
 
-    // ── Tap 4: Close Wind Mitigation timer — compute mitigation ───────────
-    case 'RELEASE': {
-      _cancelBirdNest();
-      _tap4AtMs         = atMs;
-      _mitigationFactor = _computeMitigationFactor();
-      _phase            = 'SPLASHDOWN';
-      _dispatchPhase({
-        phase:            'SPLASHDOWN',
-        tap4AtMs:         _tap4AtMs,
-        mitigationFactor: _mitigationFactor,
-        atMs,
-      });
-      _scheduleBirdNest();
+    case 'PHASE_3_METRONOME':
+      if (_tap4AtMs === null) {
+        _tap4AtMs = atMs;
+        _dispatchPhase({
+          phase:           'PHASE_3_METRONOME',
+          phase3StartAtMs: _tap3AtMs,
+          tap4AtMs:        _tap4AtMs,
+          scatterRadius:   _scatterRadius,
+          durationMs:      CAST_PHASE_MIN_MS,
+          atMs,
+        });
+      }
       break;
-    }
 
     default:
-      // Not in a spacebar-expecting phase — ignore (no-op).
+      // Spacebar in any other phase is silent (D-015 rev).
       break;
   }
 }
@@ -750,54 +838,51 @@ modeRouter.registerMountManifest({
   /**
    * Acquire bus subscriptions and reset state when entering TOURNAMENT_ACTIVE.
    *
-   * The _castRng stream is intentionally NOT reset here — it persists across
-   * multiple casts within a tournament for RNG continuity (§5d). The global
-   * seed is set once by engine.boot() before any cast can occur.
+   * _castRng is intentionally NOT reset — it persists across multiple casts
+   * within a tournament for RNG continuity (§5d).
    */
   onMount(_nextMode, _prevMode) {
-    // Ensure clean slate on entry (defensive: covers re-entry after TOURNAMENT_RESULTS).
-    _phase            = 'IDLE';
-    _target           = null;
-    _windAtCast       = null;
-    _tap1AtMs         = null;
-    _tap2AtMs         = null;
-    _tap3AtMs         = null;
-    _tap4AtMs         = null;
-    _scatterRadius    = 0;
-    _mitigationFactor = 0;
-    _nestHandle       = null;
+    _phase                = 'IDLE';
+    _target               = null;
+    _windAtCast           = null;
+    _tap1AtMs             = null;
+    _tap2AtMs             = null;
+    _tap3AtMs             = null;
+    _tap4AtMs             = null;
+    _phase2StartAtMs      = null;
+    _phase4StartAtMs      = null;
+    _scatterRadius        = 0;
+    _mitigationFactor     = 0;
+    _whiffHandle          = null;
+    _metronomeEndHandle   = null;
+    _metronomeTickHandles = [];
 
     _unsubs = [
       // TARGET_LOCKED from targetSelector — the Tap-1 anchor trigger (D-041).
-      bus.on('TARGET_LOCKED',      _onTargetLocked),
+      bus.on('TARGET_LOCKED',     _onTargetLocked),
 
-      // Arrow taps: Tap 1 (Backswing), Tap 3 (Apex), Tap 5 (Splashdown).
-      bus.on('INPUT_ARROW_UP',     _onArrow),
-      bus.on('INPUT_ARROW_DOWN',   _onArrow),
-      bus.on('INPUT_ARROW_LEFT',   _onArrow),
-      bus.on('INPUT_ARROW_RIGHT',  _onArrow),
+      // ARROW_UP: Tap 1 (ARMED → PHASE_1) and Tap 3 (PHASE_2 → PHASE_3).
+      bus.on('INPUT_ARROW_UP',    _onArrowUp),
 
-      // Spacebar taps: Tap 2 (open Wind Mitigation), Tap 4 (close Wind Mitigation).
-      bus.on('INPUT_SPACEBAR',     _onSpacebar),
+      // ARROW_DOWN: Tap 5 (PHASE_4 → CAST_LANDED).
+      bus.on('INPUT_ARROW_DOWN',  _onArrowDown),
+
+      // SPACEBAR: optional Taps 2 and 4 (wind-mitigation timing).
+      bus.on('INPUT_SPACEBAR',    _onSpacebar),
     ];
   },
 
   /**
    * Release all bus subscriptions and clock handles when leaving TOURNAMENT_ACTIVE.
-   *
    * H-005: every handle acquired in onMount is cancelled here.
-   * D-043: if we are mid-cast when unmounted, SCAN_UNLOCKED is dispatched
-   *        so the scan lock does not persist into the next mode.
    */
   onUnmount(_prevMode, _nextMode) {
-    // Cancel Bird's Nest timer first (before _resetToIdle clears _nestHandle).
-    _cancelBirdNest();
+    _cancelWhiff();
+    _cancelMetronomeTimers();
 
-    // Release bus subscriptions.
     for (const unsub of _unsubs) unsub();
     _unsubs = [];
 
-    // Reset state and unlock scan if mid-cast.
     _resetToIdle();
   },
 });

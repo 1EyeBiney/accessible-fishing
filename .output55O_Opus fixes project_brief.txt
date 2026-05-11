@@ -1,0 +1,110 @@
+Thinking: Let me start by reviewing the existing files to understand the current structure before tackling the three main tasks: acknowledging the amendments, fixing the sonar subscription issue, and implementing the casting FSM.
+Read castPipeline.js, lines 1 to 500
+Read tournamentActive.js, lines 200 to 393
+Read targetSelector.js, lines 100 to 311
+Thinking: I need to review the full castPipeline.js file to understand its current structure and how the tap handlers work, since I'm going to need to refactor it based on the new strictly sequential 4-phase FSM rules that were outlined in the revised brief.
+Looking at the key changes: the metronome is now anchored to fixed durations with a 2500ms minimum floor, spacebar timing is locked to phases 1 and 3, arrow keys trigger phase transitions, and missing spacebar taps don't cause a Bird's Nest but zero out wind mitigation. I also need to emit the audio events (AUDIO_METRONOME_TICK and AUDIO_PITCH_SWEEP) at the right moments.
+The flow is now: Arrow Up enters Phase 1 and starts the metronome, optional Spacebar is Tap 2, then Arrow Up in Phase 2 locks accuracy and starts Phase 3, optional Spacebar is Tap 4, and finally Arrow Down in Phase 4 locks the splash. Let me trace through the original code's entry point to see how TARGET_LOCKED transitions into the FSM.
+The new state machine has IDLE waiting for TARGET_LOCKED, then ARMED for the inter-tap timeout before Tap 1, then PHASE_1 and PHASE_3 running the metronome with optional spacebar logging, and PHASE_2 and PHASE_4 waiting for arrow inputs with whiff timeouts. For wind mitigation, I'm comparing the spacebar timing deviation between the two phases—if both spacebars were hit, the quality is based on how consistently they align with their respective metronome beats, otherwise mitigation is zero.
+Bird's nest triggers only on arrow whiffs: missing Tap 1 in ARMED, missing Tap 3 in PHASE_2, or missing Tap 5 in PHASE_4, all using the inter-tap timeout window. Spacebar taps never cause bird's nest. I'm following the original proposal exactly—Arrow Up for Tap 1 and Tap 3, Arrow Down for Tap 5—and setting the metronome duration to 2500ms as the floor.
+Now I need to rethink how scatter and mitigation work under this new model. Scatter quality should reflect how quickly the player reacts during the pitch sweep in Phase 2, since that's where accuracy is determined—faster reaction means tighter scatter. For mitigation, I'm comparing the relative timing of each spacebar tap within its respective metronome; perfect mitigation happens when both taps hit at the same beat position. Let me map out the timing variables I need to track for these calculations. I'm going back and forth on whether to factor Tap5 reaction time into the splash quality calculation, but I think the cleaner approach is to keep splash kind determined by scatter accuracy alone—Tap5 just marks the end of the cast. I'll implement this as a v0.1 and refine it later if needed. Now I'm setting up the phase timing constants and rewriting the castPipeline.js to replace the FSM logic while keeping the existing math for landing, splash, scatter, and lure matching.
+I'm defining the event structure for metronome ticks, pitch sweeps, phase changes, bird's nest triggers, and landing completion. The metronome runs 4 beats over 2500ms, so each beat is 625ms apart. Bird's nest only appears when waiting for Tap1 (ARMED state), Tap3 (PHASE_2), or Tap5 (PHASE_4)—PHASE_1 and PHASE_3 complete automatically without whiff risk. I'll use the clock to schedule both individual ticks and phase transitions, then switch on the current phase and input type to handle each tap.
+Writing the input handlers... I'm realizing the user wants fishFinder to listen for REQUEST_SCAN as a domain event rather than raw input, which keeps the input binding in the UI layer. To satisfy the H-005 listener cleanup requirement, I should register a smaller mount manifest in fishFinder that only subscribes to REQUEST_SCAN—not remove the manifest entirely—since a module-level listener would persist across mode transitions and fail the test.
+I'll also add a FISH_FINDER_BLOCKED event emission from scan() to prevent silent failures, then track down where currentPoiId gets seeded in the default state.
+Searched for regex session|currentPoiId|initialState|defaultState (**/src/core/stateStore.js), 18 results. Files: c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js
+Read castPipeline.js, lines 500 to 500
+Read castPipeline.js, lines 498 to 804
+Read stateStore.js, lines 40 to 200
+Thinking: I've got the full picture now. I need to acknowledge the document amendments first, then fix the sonar integration by updating the event listener in the fish finder module while keeping the manifest reference intact.
+For the tournament state, I'll make sure `scan()` emits a blocked signal instead of silently returning, and add an INPUT_ENTER subscription in the tournament module that triggers the scan request. I'm also setting the initial POI to 'DOCK' so it never starts as null.
+The big piece is rewriting castPipeline.js as the Accessible Golf FSM. Since it's a major architectural change, I'll preserve the utility functions like scatter math and landing calculations, but completely overhaul the header documentation, update the constants to include the metronome from D-070, and rewrite the phase state machine with the new input handlers and metronome logic.
+I'm planning the edits surgically using multi_replace to avoid destructive operations—swapping the header doc, constants block, module state, and the core FSM handlers like `_onArrow`, `_onTargetLocked`, and the new metronome sweep logic. The scatter radius and mitigation factor calculations need to shift to reaction-based and metronome-relative respectively.
+I'll break this into 3 chunks: the doc and constants first, then the helper functions and state management, then the event handlers and mount manifest. Let me start drafting the new constant definitions...
+Defining the new constants... I'm laying out the remaining FSM phases—Phase 2 and Phase 4 handle the pitch sweeps and accuracy windows, while Phase 3 mirrors Phase 1's metronome structure. I need to add state tracking for phase start times and metronome scheduling handles, then refactor the core logic into surgical replacements: updating the header and constants, adding the new state fields and timer helpers, rewriting the scatter and mitigation calculations, and reworking the input handlers to distinguish between arrow directions.
+Rather than doing five separate edits, I'll delete the existing file and recreate it entirely—cleaner and safer for a rewrite this size. The targetSelector mount manifest should stay unchanged since the bus subscriptions still work. Let me start executing this now.
+Acknowledged. Recording amendments and implementing.
+§6 Amendments Recorded
+**D-014 (Revision v1.14):** Cast is a strictly sequential 4-phase FSM. 5 taps mandatory. Spacebars (Taps 2, 4) anchor to fixed-duration metronomes. Missing Spacebar → 0% mitigation, **no** Bird's Nest.
+**D-015 (Revision v1.14):** Whiffs apply only to Arrow Key inputs (Taps 1, 3, 5). Spacebar misses are silent.
+**D-070 (New v1.14) CAST_PHASE_MIN_MS:** Accessibility floor of **2500ms** for all fixed-duration audio phases.
+**D-021 (Addendum v1.14):** Cast FSM emits `AUDIO_METRONOME_TICK` and `AUDIO_PITCH_SWEEP` events only; `audio/synthGraph.js` is the sole consumer. No direct Web Audio access from `castPipeline`.
+One implementation note on Point 2 of your sonar fix: per H-005 (no stray listeners after a HUB↔TOURNAMENT round-trip),
+fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+'s REQUEST_SCAN subscription must remain mode-scoped via a manifest. I've kept the
+registerMountManifest (c:\nbs\afish\src\core\modeRouter.js:91)
+block but stripped the raw INPUT_ENTER coupling and replaced it with REQUEST_SCAN — semantically what you asked for (the input binding leaves the equipment module) without leaking listeners. Flagging explicitly.
+Now reading the rest of the pipeline file and the state store before patching:
+Searched for text SCAN_LOCKED (**/src/core/stateStore.js), 1 result. Files: c:\nbs\afish\src\core\stateStore.js
+Searched for text FISH_FINDER_BLOCKED (**/src/**/*.js), no results
+Patch 1 —
+fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+Swap raw INPUT_ENTER for the domain event REQUEST_SCAN, and make blocked scans audible (no more silent early-returns).
+Replacing 43 lines with 49 lines in fishFinder.js
+```
+```
+```
+```
+Patch 2 —
+tournamentActive.js (/c:/nbs/afish/src/ui/tournamentActive.js)
+Add the Enter → REQUEST_SCAN binding (and a FISH_FINDER_BLOCKED announcer so the dead-sonar case is audible).
+Replacing 8 lines with 46 lines in tournamentActive.js
+```
+```
+```
+```
+Patch 3 — Seed
+currentPoiId (c:\nbs\afish\src\core\stateStore.js:95)
+default
+Replacing 11 lines with 17 lines in stateStore.js
+```
+```
+```
+```
+Patch 4 —
+castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+— Accessible Golf FSM
+Replacing the file in full given the scope of the D-014 revision.
+Running Remove-Item -LiteralPath &quot;c:\nbs\afish\src\casting\castPipeline.js&quot;. Remove-Item -LiteralPath "c:\nbs\afish\src\casting\castPipeline.js"
+Created castPipeline.js
+Checked castPipeline.js, fishFinder.js, tournamentActive.js, stateStore.js, no problems found
+All four files compile clean.
+Summary
+Amendments recorded (pending brief bump to v1.14)
+**D-014 rev** — 4-phase Accessible Golf FSM, 5 mandatory taps, Spacebars anchored to metronome.
+**D-015 rev** — Whiffs/Bird's Nest only on Arrow inputs.
+**D-070 new** —
+CAST_PHASE_MIN_MS = 2500 (c:\nbs\afish\src\casting\castPipeline.js:179)
+.
+**D-021 addendum** — `AUDIO_METRONOME_TICK` / `AUDIO_PITCH_SWEEP` bus events; no audio imports in `castPipeline`.
+Sonar fix
+1.
+src/equipment/fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+— manifest now subscribes to REQUEST_SCAN (not raw INPUT_ENTER);
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+emits
+FISH_FINDER_BLOCKED { reason } (c:\nbs\afish\src\equipment\fishFinder.js:153)
+on every early-return so blocked scans are never silent. Manifest kept (not removed) — required by H-005 to avoid stray listeners.
+2.
+src/ui/tournamentActive.js (/c:/nbs/afish/src/ui/tournamentActive.js)
+— owns the INPUT_ENTER →
+bus.emit('REQUEST_SCAN') (c:\nbs\afish\src\casting\castPipeline.js:147)
+binding; announces FISH_FINDER_BLOCKED reasons.
+3.
+src/core/stateStore.js (/c:/nbs/afish/src/core/stateStore.js)
+—
+session.player.currentPoiId (c:\nbs\afish\src\core\stateStore.js:101)
+default is now &#39;DOCK&#39; so
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+won't early-return on a fresh boot. The HUB → TOURNAMENT transition will overwrite this with the tournament's real launch POI in Phase 7.
+Casting FSM
+src/casting/castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+— full rewrite to the 6-state FSM IDLE → ARMED → PHASE_1_METRONOME → PHASE_2_ACCURACY → PHASE_3_METRONOME → PHASE_4_IMPACT → CAST_LANDED. Key behaviour:
+Phase Trigger in Tap waited Whiff timer Auto-advance
+ARMED TARGET_LOCKED Tap 1 ARROW_UP 3 s —
+PHASE_1_METRONOME Tap 1 optional Tap 2 SPACEBAR OFF after 2500 ms
+PHASE_2_ACCURACY metronome end (AUDIO_PITCH_SWEEP UP) Tap 3 ARROW_UP 3 s —
+PHASE_3_METRONOME Tap 3 optional Tap 4 SPACEBAR OFF after 2500 ms
+PHASE_4_IMPACT metronome end (AUDIO_PITCH_SWEEP DOWN) Tap 5 ARROW_DOWN 3 s —
+Scatter math is now Phase-2 reaction-based; mitigation is metronome-anchored and resolves to 0 if either Spacebar was skipped. Bird's Nest only fires on Arrow whiffs.
+One thing for your attention
+The brief is still at v1.13. Per §0 directives, please bump brief_version: 1.14 and add an S-015 session-log entry covering these four amendments before the next architectural change lands.

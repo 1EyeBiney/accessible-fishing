@@ -334,6 +334,37 @@ function _onClockStarted() {
   _announce('Tournament clock started. Good luck!');
 }
 
+/**
+ * INPUT_ENTER tap handler — control surface for TOURNAMENT_ACTIVE.
+ *
+ * Translates the raw input event into the domain action REQUEST_SCAN, which
+ * is consumed by equipment/fishFinder.js (§9 boundary: equipment never reads
+ * raw input).  No game logic is performed here — this is a one-line mapping.
+ */
+function _onRequestScan() {
+  bus.emit('REQUEST_SCAN', { source: 'INPUT_ENTER', atMs: Date.now() });
+}
+
+/**
+ * FISH_FINDER_BLOCKED handler — announce why a scan request did not start.
+ *
+ * fishFinder emits this whenever scan() early-returns (D-043 scan-lock or no
+ * active POI).  Surfacing the reason on the assertive live region prevents
+ * the "dead sonar" silent-failure mode and gives screen-reader players an
+ * immediate diagnostic.
+ *
+ * @param {{ reason: string, atMs: number }} payload
+ */
+function _onFinderBlocked(payload) {
+  const REASON_TEXT = {
+    SCAN_LOCKED:   'Fish finder unavailable while casting.',
+    NO_ACTIVE_POI: 'No location to scan — travel to a fishing spot first.',
+  };
+  const text = REASON_TEXT[payload?.reason]
+    ?? `Fish finder unavailable: ${_titleCase(payload?.reason ?? 'unknown')}.`;
+  _announce(text);
+}
+
 // ---------------------------------------------------------------------------
 // Mount manifest
 // ---------------------------------------------------------------------------
@@ -354,8 +385,15 @@ export const tournamentActiveManifest = {
       // ── Targeting / casting ──────────────────────────────────────────────
       bus.on('TARGET_LOCKED',          _onTargetLocked),
       bus.on('FISH_FINDER_RESULTS',    _onFinderResults),
+      bus.on('FISH_FINDER_BLOCKED',    _onFinderBlocked),
       bus.on('CAST_LANDED',            _onCastLanded),
       bus.on('CAST_BIRDS_NEST',        _onBirdsNest),
+
+      // ── Control surface: raw input → domain actions ─────────────────────
+      // §9 boundary: equipment/* never subscribes to INPUT_* directly. This
+      // UI announcer module owns the Enter → REQUEST_SCAN binding for the
+      // TOURNAMENT_ACTIVE mode (D-010, D-029 tap event).
+      bus.on('INPUT_ENTER',            _onRequestScan),
 
       // ── Bite sequence ────────────────────────────────────────────────────
       bus.on('BITE_NIBBLE',            _onBiteNibble),

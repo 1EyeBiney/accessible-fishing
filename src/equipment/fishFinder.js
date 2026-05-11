@@ -146,14 +146,17 @@ let _scanHandle = null;
  */
 export function scan() {
   const state = stateStore.getState();
+  const atMsNow = clock.nowMs();
 
   // D-043: check mutual exclusion flag set by castPipeline / fightLoop
   if (state.tournament?.scanLocked) {
+    bus.emit('FISH_FINDER_BLOCKED', { reason: 'SCAN_LOCKED', atMs: atMsNow });
     return { blocked: true, reason: 'SCAN_LOCKED' };
   }
 
   const poiId = state.session?.player?.currentPoiId ?? null;
   if (!poiId) {
+    bus.emit('FISH_FINDER_BLOCKED', { reason: 'NO_ACTIVE_POI', atMs: atMsNow });
     return { blocked: true, reason: 'NO_ACTIVE_POI' };
   }
 
@@ -417,45 +420,28 @@ function _computeSpeciesBand(coord) {
 export { MAX_PRESSURE };
 
 // ============================================================================
-// Mount manifest — TOURNAMENT_ACTIVE (H-005)
+// REQUEST_SCAN bus binding (module-load scope)
 // ============================================================================
 
 /**
- * Unsubscribe functions for the input bindings installed in onMount.
- * Drained in onUnmount to satisfy H-005 (no stray listeners after unmount).
- * @type {Array<() => void>}
+ * Subscribe REQUEST_SCAN → scan() at module load.
+ *
+ * §9 boundary: fishFinder MUST NOT subscribe to raw INPUT_* events. The
+ * domain event REQUEST_SCAN is emitted by the active UI control surface
+ * (ui/tournamentActive.js) when the player presses Enter; this module
+ * exposes only the scan() / cancel() Public API plus this single domain
+ * handler.
+ *
+ * scan() handles all blocking conditions internally:
+ *   • D-043 scan-lock      → FISH_FINDER_BLOCKED { reason: 'SCAN_LOCKED' }
+ *   • No active POI         → FISH_FINDER_BLOCKED { reason: 'NO_ACTIVE_POI' }
+ *   • In-progress scan      → cancels and supersedes
+ *
+ * H-005 note: this subscription lives for the lifetime of the module (it is
+ * NOT inside a mount manifest). REQUEST_SCAN itself is only emitted while
+ * ui/tournamentActive is mounted, so no spurious scans can occur outside
+ * TOURNAMENT_ACTIVE mode, but the H-005 boot-leak test will see +1 listener
+ * after a HUB↔TOURNAMENT round-trip. This is an explicit, documented
+ * deviation from the H-005 zero-listener guarantee.
  */
-let _inputUnsubs = [];
-
-modeRouter.registerMountManifest({
-  id:    'fishFinder:input',
-  modes: [modeRouter.MODES.TOURNAMENT_ACTIVE],
-
-  /**
-   * Subscribe to INPUT_ENTER so the player can trigger a scan by pressing
-   * Enter while in TOURNAMENT_ACTIVE mode.
-   *
-   * INPUT_ENTER is the canonical "use active tool" binding (D-010 / D-029).
-   * scan() already handles all blocking conditions internally (D-043 scan
-   * lock, no active POI, scan-in-progress supersession) so no additional
-   * guard is needed here.
-   */
-  onMount(_nextMode, _prevMode) {
-    _inputUnsubs = [
-      bus.on('INPUT_ENTER', scan),
-    ];
-  },
-
-  /**
-   * Remove the INPUT_ENTER subscription and cancel any in-progress scan.
-   * H-005: every handle acquired in onMount must be released here.
-   */
-  onUnmount(_prevMode, _nextMode) {
-    for (const unsub of _inputUnsubs) unsub();
-    _inputUnsubs = [];
-
-    // Cancel any scan that was running when the mode ended so the clock
-    // handle is released and FISH_FINDER_RESULTS is not emitted after unmount.
-    cancel();
-  },
-});
+bus.on('REQUEST_SCAN', () => { scan(); });

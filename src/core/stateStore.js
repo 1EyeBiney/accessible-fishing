@@ -89,10 +89,16 @@ function _initialState() {
     /**
      * Session partition — ephemeral, never persisted (D-019).
      * Tracks live player position for navigation feedback.
+     *
+     * currentPoiId defaults to 'DOCK' so that scan() and other POI-bound
+     * subsystems do not silently fail before navigation/tournament code
+     * has had a chance to seed a real starting POI. The HUB→TOURNAMENT
+     * transition (Phase 7) will overwrite this via PLAYER_ARRIVED_AT_POI
+     * with the tournament's actual launch POI.
      */
     session: {
       player: {
-        currentPoiId: null,
+        currentPoiId: 'DOCK',
         microOffset:  { dx: 0, dy: 0 },
         anchored:     false,
       },
