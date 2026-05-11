@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AFish — Accessible Fishing</title>
+
+  <style>
+    /* ── Reset & base ───────────────────────────────────────────────────── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      /* High-contrast colour tokens */
+      --colour-bg:          #0a0a0a;
+      --colour-surface:     #111111;
+      --colour-border:      #444444;
+      --colour-text:        #f0f0f0;
+      --colour-text-muted:  #aaaaaa;
+      --colour-accent:      #00d4ff;
+      --colour-accent-dark: #0099bb;
+      --colour-focus-ring:  #ffdd00;
+      --colour-danger:      #ff4444;
+
+      /* Spacing */
+      --space-sm:  0.5rem;
+      --space-md:  1rem;
+      --space-lg:  2rem;
+      --space-xl:  3rem;
+
+      /* Typography */
+      --font-base: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      background-color: var(--colour-bg);
+      color: var(--colour-text);
+      font-family: var(--font-base);
+      font-size: 1.125rem; /* 18 px — WCAG minimum for body text */
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: var(--space-lg);
+    }
+
+    /* ── Skip-to-content link ────────────────────────────────────────────── */
+    .skip-link {
+      position: absolute;
+      top: -9999px;
+      left: var(--space-md);
+      background: var(--colour-accent);
+      color: #000000;
+      padding: var(--space-sm) var(--space-md);
+      border-radius: 0 0 4px 4px;
+      font-weight: 700;
+      text-decoration: none;
+      z-index: 9999;
+    }
+    .skip-link:focus {
+      top: 0;
+      outline: 3px solid var(--colour-focus-ring);
+      outline-offset: 2px;
+    }
+
+    /* ── Layout shell ────────────────────────────────────────────────────── */
+    #app {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-lg);
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    .game-header {
+      text-align: center;
+    }
+
+    .game-title {
+      font-size: clamp(2rem, 6vw, 3.5rem);
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      color: var(--colour-accent);
+      text-shadow: 0 0 24px rgba(0, 212, 255, 0.35);
+      line-height: 1.1;
+    }
+
+    .game-subtitle {
+      margin-top: var(--space-sm);
+      font-size: 1rem;
+      color: var(--colour-text-muted);
+      font-style: italic;
+    }
+
+    /* ── Start button ────────────────────────────────────────────────────── */
+    #start-btn {
+      display: block;
+      width: 100%;
+      padding: 1.25rem 2rem;
+      font-size: 1.375rem; /* 22 px */
+      font-weight: 700;
+      font-family: inherit;
+      color: #000000;
+      background-color: var(--colour-accent);
+      border: 3px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.15s ease, border-color 0.15s ease;
+      /* Minimum 44 × 44 px touch target — WCAG 2.5.5 */
+      min-height: 64px;
+    }
+
+    #start-btn:hover {
+      background-color: #33ddff;
+    }
+
+    #start-btn:focus-visible {
+      outline: 4px solid var(--colour-focus-ring);
+      outline-offset: 3px;
+    }
+
+    #start-btn:active {
+      background-color: var(--colour-accent-dark);
+    }
+
+    #start-btn:disabled {
+      background-color: #2a5a66;
+      color: #6a8a8a;
+      cursor: default;
+      border-color: var(--colour-border);
+    }
+
+    /* ── Status display ──────────────────────────────────────────────────── */
+    #status-display {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--colour-text-muted);
+      background: var(--colour-surface);
+      border: 1px solid var(--colour-border);
+      border-radius: 4px;
+      padding: var(--space-sm) var(--space-md);
+      min-height: 2.5rem;
+      text-align: center;
+    }
+
+    /* ── Keyboard legend ─────────────────────────────────────────────────── */
+    .key-legend {
+      border: 1px solid var(--colour-border);
+      border-radius: 4px;
+      padding: var(--space-md);
+      background: var(--colour-surface);
+    }
+
+    .key-legend summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--colour-accent);
+      font-size: 1rem;
+      list-style: none; /* remove default triangle in some browsers */
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .key-legend summary::-webkit-details-marker { display: none; }
+
+    .key-legend summary::before {
+      content: '▶';
+      font-size: 0.7em;
+      transition: transform 0.15s ease;
+    }
+
+    .key-legend[open] summary::before {
+      transform: rotate(90deg);
+    }
+
+    .key-legend summary:focus-visible {
+      outline: 3px solid var(--colour-focus-ring);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    .key-legend-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      column-gap: var(--space-md);
+      row-gap: 0.35rem;
+      margin-top: var(--space-md);
+      font-size: 0.9rem;
+    }
+
+    .key-label {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: #000000;
+      background: var(--colour-text-muted);
+      border-radius: 3px;
+      padding: 1px 6px;
+      white-space: nowrap;
+      justify-self: start;
+      align-self: center;
+    }
+
+    .key-desc {
+      color: var(--colour-text-muted);
+      align-self: center;
+    }
+
+    /* ── ARIA announcer (visually hidden but rendered for screen readers) ── */
+    /*
+     * The #announcer is visually hidden using a clip-path trick that keeps it
+     * in the accessibility tree. It must NOT use display:none or visibility:hidden
+     * because those values remove the element from the tree and silence the
+     * screen reader. The element is positioned off-screen at a 1×1 px sliver
+     * so layout engines do not waste paint time on it while screen readers
+     * still discover and monitor it.
+     *
+     * aria-live="assertive" — interrupts the current TTS utterance immediately.
+     * aria-atomic="true"    — reads the entire region as one unit, not just the diff.
+     *
+     * WCAG technique: SR-001 (AFish internal).
+     */
+    #announcer {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* ── Error panel (shown if boot fails) ──────────────────────────────── */
+    #error-panel {
+      display: none;
+      border: 2px solid var(--colour-danger);
+      border-radius: 4px;
+      padding: var(--space-md);
+      background: #1a0000;
+      color: #ffaaaa;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #error-panel[data-visible] {
+      display: block;
+    }
+
+    /* ── Footer ──────────────────────────────────────────────────────────── */
+    .game-footer {
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--colour-border);
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Skip navigation for keyboard / switch users -->
+  <a class="skip-link" href="#start-btn">Skip to Start button</a>
+
+  <!--
+    ARIA live region — visually hidden, always in the DOM.
+    browserAdapter.js writes to this element whenever a UI_ANNOUNCE
+    event fires on the event bus.
+    Must be present BEFORE the script runs so the screen reader has
+    time to register it as a live region before the first update.
+  -->
+  <div
+    id="announcer"
+    role="status"
+    aria-live="assertive"
+    aria-atomic="true"
+    aria-relevant="additions text"
+  ></div>
+
+  <main id="app" role="main">
+
+    <header class="game-header">
+      <h1 class="game-title" tabindex="-1">AFish</h1>
+      <p class="game-subtitle">An accessible fishing game — fully playable with keyboard or switch access</p>
+    </header>
+
+    <!--
+      The "Arming" button.
+
+      Web Audio API requires a user gesture before an AudioContext can be
+      created or resumed. This button IS that gesture. Clicking it:
+        1. Unlocks the AudioContext (inside browserAdapter.js)
+        2. Calls audioEngine.init()
+        3. Calls engine.boot()
+
+      The button is intentionally large (WCAG 2.5.5: minimum 44×44 px touch
+      target) and receives the page's initial focus via autofocus so keyboard
+      and switch users can activate it without tabbing.
+    -->
+    <button
+      id="start-btn"
+      type="button"
+      autofocus
+      aria-describedby="start-hint"
+    >
+      Start Game / Enable Audio
+    </button>
+
+    <p id="start-hint" style="text-align:center; font-size:0.9rem; color:var(--colour-text-muted);">
+      Activating this button unlocks synthesized audio and starts the game.
+      All controls are keyboard-accessible.
+    </p>
+
+    <!-- Runtime status line (mode, profile, errors) -->
+    <div
+      id="status-display"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      Ready. Press "Start Game / Enable Audio" to begin.
+    </div>
+
+    <!-- Error panel — hidden until browserAdapter surfaces a boot failure -->
+    <div id="error-panel" role="alert" aria-live="assertive"></div>
+
+    <!-- Keyboard legend -->
+    <details class="key-legend">
+      <summary>Keyboard Controls</summary>
+      <dl class="key-legend-grid">
+        <dt class="key-label">↑ / Num 8</dt>
+        <dd class="key-desc">Navigate up</dd>
+
+        <dt class="key-label">↓ / Num 2</dt>
+        <dd class="key-desc">Navigate down</dd>
+
+        <dt class="key-label">← / Num 4</dt>
+        <dd class="key-desc">Navigate left</dd>
+
+        <dt class="key-label">→ / Num 6</dt>
+        <dd class="key-desc">Navigate right</dd>
+
+        <dt class="key-label">Space / Num 5</dt>
+        <dd class="key-desc">Confirm / Cast / Reel</dd>
+
+        <dt class="key-label">Enter</dt>
+        <dd class="key-desc">Select</dd>
+
+        <dt class="key-label">Escape</dt>
+        <dd class="key-desc">Back / Cancel</dd>
+
+        <dt class="key-label">Backspace</dt>
+        <dd class="key-desc">Delete / Previous</dd>
+      </dl>
+    </details>
+
+  </main>
+
+  <footer class="game-footer">
+    <p>AFish v1.13 &mdash; accessible-fishing</p>
+  </footer>
+
+  <!--
+    Browser adapter — the platform glue between the DOM and the AFish engine.
+    type="module" gives it:
+      • ES module scope (no globals leaked)
+      • Deferred execution (runs after the DOM is parsed)
+      • Access to import.meta for the ESM check in engine.js's ignition switch
+        (the browser's import.meta.url will not match process.argv[1], so the
+        ignition switch correctly does NOT autoboot — browserAdapter calls boot()
+        explicitly after the user gesture).
+  -->
+  <script type="module" src="./src/browserAdapter.js"></script>
+
+</body>
+</html>
