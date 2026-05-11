@@ -13,9 +13,12 @@
  *   3. No changes to engine.js are required.
  */
 
-import { registerMountManifest } from '../core/modeRouter.js';
-import { focusTrapManifest }     from './focusTrap.js';
-import { hubManifest }           from './hub.js';
+import { registerMountManifest }         from '../core/modeRouter.js';
+import { focusTrapManifest }             from './focusTrap.js';
+import { hubManifest }                   from './hub.js';
+import { tournamentBriefingManifest }    from './tournamentBriefing.js';
+import { tournamentActiveManifest }      from './tournamentActive.js';
+import { tournamentResultsManifest }     from './tournamentResults.js';
 
 // ---------------------------------------------------------------------------
 // Ordered manifest list
@@ -32,6 +35,9 @@ import { hubManifest }           from './hub.js';
 const _UI_MANIFESTS = [
   focusTrapManifest,
   hubManifest,
+  tournamentBriefingManifest,
+  tournamentActiveManifest,
+  tournamentResultsManifest,
 ];
 
 // ---------------------------------------------------------------------------

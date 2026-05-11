@@ -1,0 +1,85 @@
+Semantic workspace search is not currently available
+Thinking: Let me read the relevant files to understand the event bus event names, state store structure, and any existing tournament-related code.
+Searched for text TOURNAMENT_WARNING|TOURNAMENT_ENDED|TOURNAMENT_STARTED|CLOCK_TICK|CLOCK_WARN (**/src/**), no results
+Searched for text TARGET_LOCKED|FISH_FINDER_RESULTS|CAST_LANDED|FIGHT_RESOLVED|AI_FISH_LANDED (**/src/**), 20 results. Files: c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\casting\castSpookModel.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Searched for text TOURNAMENT_WARNING (**/src/**), no results
+Read fightLoop.js, lines 1 to 80
+Searched for regex bus\.emit\(&#39;(TOURNAMENT|CLOCK_WARN|SIMULATED)&#39; (**/src/**), no results
+Searched for regex TOURNAMENT_DURATION|TIME_LIMIT|timeLimit|durationMs (**/src/**), 20 results. Files: c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\core\inputAdapter.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Read competitorAI.js, lines 1 to 80
+Searched for regex bus\.emit|emit\( (**/src/tournament/**), 9 results. Files: c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js
+Read scoring.js, lines 1 to 80
+Searched for regex getLeaderboard|getState|leaderboard|finalRank|playerRank (**/src/tournament/**), 20 results. Files: c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js
+Searched for regex export (**/src/tournament/scoring.js), 4 results. Files: c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js
+Searched for regex getState|tournament|profile (**/src/core/stateStore.js), 20 results. Files: c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js
+Read stateStore.js, lines 76 to 120
+Searched for regex TOURNAMENT_SPEC|tournamentSpec|spec\.|tier|winCondition (**/src/tournament/**), 20 results. Files: c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js
+Read scoring.js, lines 50 to 380
+Searched for regex nowMs|totalMs|remainingMs|export (**/src/core/clock.js), 20 results. Files: c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js, c:\nbs\afish\src\core\clock.js
+Thinking: Now I have all the context I need. Let me also check the FIGHT_RESOLVED payload fields and FISH_FINDER_RESULTS payload to format announcements correctly.
+Now I have all the context needed. Let me check FISH_FINDER_RESULTS payload and TARGET_LOCKED payload:
+Read fishFinder.js, lines 1 to 40
+Read castPipeline.js, lines 1 to 50
+Searched for regex bus\.emit\(&#39;TARGET_LOCKED|bus\.emit\(&#39;CAST_LANDED|bus\.emit\(&#39;CAST_BIRDS_NEST (**/src/casting/castPipeline.js), 2 results. Files: c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Read castPipeline.js, lines 30 to 100
+Thinking: Now I have enough context. Let me read one more piece - what does `TARGET_LOCKED` look like? Let me check targetSelector.
+I have enough context now. Let me build all four files:
+Created 4 todos. 4 items: Create tournamentBriefing.js (in-progress); Create tournamentActive.js (not-started); Create tournamentResults.js (not-started); Update src/ui/index.js (not-started)
+Created tournamentBriefing.js
+Starting: Create tournamentActive.js (2/4). 4 items: Create tournamentBriefing.js (completed); Create tournamentActive.js (in-progress); Create tournamentResults.js (not-started); Update src/ui/index.js (not-started)
+Created tournamentActive.js
+Read stateStore.js, lines 76 to 120
+Searched for regex TOURNAMENT_SPEC|tournamentSpec|spec\.|tier|winCondition (**/src/tournament/**), 20 results. Files: c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js, c:\nbs\afish\src\tournament\scoring.js
+Starting: Create tournamentResults.js (3/4). 4 items: Create tournamentBriefing.js (completed); Create tournamentActive.js (completed); Create tournamentResults.js (in-progress); Update src/ui/index.js (not-started)
+Created tournamentResults.js
+Starting: Update src/ui/index.js (4/4). 4 items: Create tournamentBriefing.js (completed); Create tournamentActive.js (completed); Create tournamentResults.js (completed); Update src/ui/index.js (in-progress)
+Read index.js
+Replacing 3 lines with 6 lines in index.js
+```
+```
+```
+```
+Replacing 4 lines with 7 lines in index.js
+```
+```
+```
+```
+Completed: Update src/ui/index.js (4/4). 4 items: Create tournamentBriefing.js (completed); Create tournamentActive.js (completed); Create tournamentResults.js (completed); Update src/ui/index.js (completed)
+Let me do a quick sanity check on the final state of index.js:
+Read index.js
+All four files are done. Here's a summary of what was created:
+**
+src/ui/tournamentBriefing.js (/c:/nbs/afish/src/ui/tournamentBriefing.js)
+** — &#39;ui:tournament-briefing&#39; manifest for
+MODES.TOURNAMENT_BRIEFING (c:\nbs\afish\src\core\modeRouter.js:56)
+Reads
+state.tournament.spec (c:\BCI\VSCode-win32-x64-1.116.0\560a9dba96\resources\app\extensions\node_modules\typescript\lib\lib.dom.d.ts:4837)
+(tier, winCondition, durationMs) and formats a spoken briefing: tier label, win-condition description, duration
+`INPUT_SPACEBAR` / `INPUT_ENTER` →
+TOURNAMENT_ACTIVE (c:\nbs\afish\src\core\modeRouter.js:57)
+; INPUT_ESCAPE →
+HUB (c:\nbs\afish\src\core\modeRouter.js:55)
+**
+src/ui/tournamentActive.js (/c:/nbs/afish/src/ui/tournamentActive.js)
+** — &#39;ui:tournament-active&#39; manifest for
+MODES.TOURNAMENT_ACTIVE (c:\nbs\afish\src\core\modeRouter.js:57)
+Pure announcer — 15 bus subscriptions covering the full fishing pipeline:
+- Targeting/casting: `TARGET_LOCKED`, `FISH_FINDER_RESULTS` (tier-aware wording, respects D-041/D-042 "no exact counts"), `CAST_LANDED`, `CAST_BIRDS_NEST`
+- Bite sequence: `BITE_NIBBLE`, `BITE_THUD`, `HOOKSET_MISSED`, `FISH_HOOKED`
+- Fight: `FIGHT_PHASE_CHANGED`, `FIGHT_THRESHOLD_CROSSED`, `FIGHT_RESOLVED` (LANDED/SNAPPED/SHAKEN)
+- AI/leaderboard: `AI_FISH_LANDED` (with rank-change callouts), `SIMULATED_TOURNAMENT_SKUNK`
+- `CLOCK_STARTED`
+- `FIGHT_TENSION` intentionally omitted (audio engine covers it)
+**
+src/ui/tournamentResults.js (/c:/nbs/afish/src/ui/tournamentResults.js)
+** — &#39;ui:tournament-results&#39; manifest for
+MODES.TOURNAMENT_RESULTS (c:\nbs\afish\src\core\modeRouter.js:58)
+Calls
+scoring.getLeaderboard() (c:\nbs\afish\src\tournament\scoring.js:368)
+, finds player rank, builds a full spoken results summary; winner announcement adapts to win condition (weight vs count); congratulates if player wins
+`INPUT_SPACEBAR` / `INPUT_ENTER` / `INPUT_ESCAPE` →
+HUB (c:\nbs\afish\src\core\modeRouter.js:55)
+**
+src/ui/index.js (/c:/nbs/afish/src/ui/index.js)
+** — updated with three new imports and manifest entries in
+_UI_MANIFESTS (c:\nbs\afish\src\ui\index.js:35)
