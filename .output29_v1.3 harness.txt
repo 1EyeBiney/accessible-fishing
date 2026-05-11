@@ -212,4 +212,108 @@ Replacing 14 lines with 17 lines in harness.js
 ```
 ```
 Now replace the summary block at the end to add Sections 5 and 6 before it:
-Replace String in File
+Replacing 3 lines with 407 lines in harness.js
+```
+```
+```
+```
+Now run the harness to see the results:
+Errored. Running node tests/harness.js 2&gt;&amp;1. node tests/harness.js 2>&1
+Thinking: The harness passed all 146 tests! But the exit code is 1, which is odd. Let me check what caused the non-zero exit code. Looking at the output, there's some PowerShell noise mixed in:
+```
++ FullyQualifiedErrorId : NativeCommandError
+```
+This looks like PowerShell is having issues with the stderr output from the Node.js process being interpreted as an error. The "Command exited with code 1" might be from the PowerShell command itself rather than the Node.js process.
+Wait, actually looking at the output more carefully:
+- "146/146 passed, 0 failed" — all tests pass
+- "Command exited with code 1" — this is the terminal's exit code
+The harness checks if any tests failed and only exits with code 1 in that case, so with zero failures it should return 0. The issue might be that stderr output from the harness is causing PowerShell to report a non-zero exit code, possibly due to how the redirect is being handled.
+Looking more closely at the output, there are PowerShell error messages mixed in that seem to be from earlier terminal output. The actual Node.js process likely exited cleanly, but `console.error` calls in the harness might be triggering PowerShell's error handling even though the process itself succeeded.
+The real question is whether the harness process exits with code 0 or 1 — the summary shows 146 out of 146 tests passed, which suggests success.  Let me run the test again without the stderr redirect to see what the actual exit code is.
+146/146 passed! The exit code 1 is a PowerShell artifact from stderr being present in earlier sections. Let me verify the true Node.js exit code:
+Running node tests/harness.js; echo &quot;Exit: $LASTEXITCODE&quot;. node tests/harness.js; echo "Exit: $LASTEXITCODE"
+Read content.txt, lines 1 to 30
+Read content.txt, lines 10 to 135
+Read content.txt, lines 30 to 177
+Updated todo list. 3 items: Read existing harness & source files (completed); Create equipment/boats.js stub (completed); Rewrite tests/harness.js with Sections 5-6 (completed)
+146/146 passed, exit code 0.
+Here's what was delivered:
+**
+boats.js (/c:/nbs/afish/src/equipment/boats.js)
+** (new stub) — stat blocks for ROWBOAT, BASS_BOAT, TOURNAMENT_BOAT; registers the HUB_ACTIVE_BOAT_SET reducer; exports
+activeBoatStats() (c:\nbs\afish\src\navigation\navigation.js:177)
+/ statsFor() / ALL_BOAT_IDS. Required for
+navigation.js (/c:/nbs/afish/src/navigation/navigation.js)
+'s top-level import to resolve.
+**
+harness.js (/c:/nbs/afish/tests/harness.js)
+** — extended with two new sections (57 new assertions across 89 → 146 total):
+Section 5 — Wind & Motor Mechanics (28 assertions):
+5a:
+wind.sample() (c:\nbs\afish\src\navigation\wind.js:244)
+schema validation — all 7 fields, correct types and ranges, unit-vector check
+5b: Determinism — identical timestamps → identical output across repeated calls  
+5c: Time-variance — different timestamps produce different vectors
+5d: Seed-dependence —
+invalidateModel() (c:\nbs\afish\src\navigation\wind.js:110)
+new seed → different fingerprint
+5e-5f:
+motor.initialise() (c:\nbs\afish\src\navigation\motor.js:195)
+populates
+state.tournament.motor (c:\nbs\afish\src\core\stateStore.js:139)
+with full tank + 100% battery
+5g-5i:
+consume(OUTBOARD) (c:\nbs\afish\src\navigation\motor.js:248)
+— exact fuel arithmetic,
+actualDistance (c:\nbs\afish\src\navigation\motor.js:240)
+,
+fuelFraction() (c:\nbs\afish\src\navigation\motor.js:329)
+5j-5k:
+consume(TROLLING) (c:\nbs\afish\src\navigation\motor.js:248)
+— exact battery drain, correct resource isolation
+5l-5m: Out-of-fuel path —
+outOfFuel=true (c:\nbs\afish\src\navigation\motor.js:243)
+, partial
+actualDistance (c:\nbs\afish\src\navigation\motor.js:240)
+,
+canUseOutboard() (c:\nbs\afish\src\navigation\motor.js:350)
+returns false
+5n: `MOTOR_FUEL_LOW` bus event fires exactly once when crossing the 20% threshold
+Section 6 — Navigation Physics & Penalties (29 assertions):
+6a:
+placeAt() (c:\nbs\afish\src\navigation\navigation.js:665)
+writes
+currentPoiId (c:\nbs\afish\src\core\stateStore.js:95)
+zero
+microOffset (c:\nbs\afish\src\core\stateStore.js:96)
+to stateStore
+6b:
+driftStep(60) (c:\nbs\afish\src\navigation\navigation.js:353)
+— offset matches the H-001 wind-only pipeline to 4 decimal places (constants replicated from navigation.js, toleranced at ±0.0002)
+6c:
+station('OARS') (c:\nbs\afish\src\navigation\navigation.js:302)
+sets
+anchored=true (c:\nbs\afish\src\core\stateStore.js:97)
+in session state
+6d:
+station() (c:\nbs\afish\src\navigation\navigation.js:302)
+rejects invalid modes
+6e: D-040 —
+nudge() (c:\nbs\afish\src\navigation\navigation.js:594)
+beyond
+frameRadius (c:\nbs\afish\src\navigation\navigation.js:219)
+advances
+clock.nowMs() (c:\nbs\afish\src\core\clock.js:295)
+by exactly 300 000 ms
+6f: D-040 — snapped offset is within
+frameRadius (c:\nbs\afish\src\navigation\navigation.js:219)
+, non-zero, and at the correct 50% position
+6g:
+requestTravel() (c:\nbs\afish\src\navigation\navigation.js:471)
+success — all 6 post-travel state invariants verified
+6h: Clock advanced by exact
+travelTimeMs (c:\nbs\afish\src\navigation\navigation.js:534)
+(5 min × 60 000 ms, speed-factor 1.0)
+6i: Motor fuel reduced by
+distanceTiles × fuelPerTile (c:\nbs\afish\src\navigation\motor.js:87)
+6j: D-007 — Bass Boat at shallow tile (minM=0.35 < shallowDraftMin=0.70) → `SHALLOW_OVERRIDE`
