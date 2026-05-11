@@ -15,9 +15,10 @@
  *      audioEngine.init() registers all bus subscriptions in one shot.
  *      No other file may import or initialise audio modules.
  *   4. Wire the CLI keyboard adapter (Node.js only).
- *      readline.emitKeypressEvents() + process.stdin.setRawMode(true) hijack raw
- *      terminal input and route it through inputAdapter so the game loop receives
- *      correctly typed INPUT_* events regardless of platform.
+ *      readline is loaded via dynamic import so the module is browser-safe.
+ *      process.stdin.setRawMode(true) hijacks raw terminal input and routes it
+ *      through inputAdapter so the game loop receives correctly typed INPUT_*
+ *      events regardless of platform.
  *   5. Transition to FOCUS_TRAP mode (D-023) — the first user-facing screen.
  *      modeRouter.transitionTo() handles clock rules (D-018) and inputAdapter.releaseAll()
  *      (H-010) as part of its transition sequence.
@@ -51,7 +52,6 @@
  *   This is a TEST-ONLY export — calling it in production corrupts game state.
  */
 
-import * as readline     from 'node:readline';
 import * as bus          from './core/eventBus.js';
 import * as clock        from './core/clock.js';
 import * as rng          from './core/rng.js';
@@ -126,15 +126,23 @@ let _cliAdapterInstalled = false;
  * Safety guards:
  *   • Only installs in a real TTY (`process.stdin.isTTY`). CI / piped stdin
  *     will not have a TTY; setRawMode() would throw.
+ *   • Browser-safe: the entire function is a no-op when `process` is undefined.
  *   • Idempotent — safe to call more than once (e.g. after _resetBootedFlag).
  *   • Ctrl+C is intercepted BEFORE mapping so the process always has a clean
  *     exit path even if the game loop hangs.
+ *   • readline is loaded via dynamic import so this module is importable in a
+ *     browser without triggering a Node.js built-in resolution error.
  *
  * @param {object}  [opts]
  * @param {boolean} [opts.silent=false]  Suppress the startup hint line.
+ * @returns {Promise<void>}
  */
-function _installCliKeyboardAdapter(opts = {}) {
+async function _installCliKeyboardAdapter(opts = {}) {
   if (_cliAdapterInstalled) return;
+
+  // Browser guard: process is not defined in browser environments.
+  // typeof check avoids a ReferenceError on bare `process` access.
+  if (typeof process === 'undefined' || !process.stdin) return;
 
   // Only activate on real interactive terminals.
   if (!process.stdin.isTTY) {
@@ -143,6 +151,11 @@ function _installCliKeyboardAdapter(opts = {}) {
     }
     return;
   }
+
+  // Dynamic import keeps 'node:readline' out of the browser module graph.
+  // The browser never reaches this line (guarded above), so the import
+  // will never be attempted in a browser context.
+  const readline = await import('node:readline');
 
   // Enable keypress events on stdin.
   readline.emitKeypressEvents(process.stdin);
@@ -264,7 +277,7 @@ async function boot(opts = {}) {
   // In a browser environment, this call is a no-op because process.stdin will
   // not be a TTY. The browser-side platform adapter (keyboard event listeners
   // on window) is wired separately in the browser entry point.
-  _installCliKeyboardAdapter({ silent: opts.silent ?? false });
+  await _installCliKeyboardAdapter({ silent: opts.silent ?? false });
 
   // ── Step 5: Transition to FOCUS_TRAP ─────────────────────────────────────
   // D-023: First user-facing mode after BOOT is FOCUS_TRAP, which holds
@@ -405,10 +418,17 @@ export { boot, assertNoLeaks, _resetBootedFlag };
 // ---------------------------------------------------------------------------
 
 (async () => {
-  if (!process.argv[1]) return; // --eval / REPL — no entry-point path
+  // Browser guard: process is not defined in browser environments.
+  // browserAdapter.js calls boot() explicitly after the user gesture.
+  if (typeof process === 'undefined') return;
+
+  // --eval / REPL invocation: no entry-point path on argv[1].
+  if (!process.argv[1]) return;
+
   const { pathToFileURL } = await import('node:url');
   const isMain = import.meta.url === pathToFileURL(process.argv[1]).href;
   if (!isMain) return;
+
   try {
     await boot();
   } catch (err) {

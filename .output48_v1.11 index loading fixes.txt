@@ -1,0 +1,75 @@
+Semantic workspace search is not currently available
+Thinking: Let me read the current engine.js to understand what needs to be changed.
+Read engine.js, lines 1 to 100
+Read engine.js, lines 100 to 215
+Read engine.js, lines 215 to 419
+I have the full picture. Now I'll apply the three targeted changes:
+Remove the top-level
+readline (c:\nbs\afish\src\engine.js:54)
+static import
+2. Make
+_installCliKeyboardAdapter (c:\nbs\afish\src\engine.js:136)
+async with a dynamic
+import('node:readline') (c:\nbs\afish\src\engine.js:54)
+Gate all
+process (c:\nbs\afish\src\engine.js:140)
+references in the ignition switch and inside the function
+Replacing 108 lines with 128 lines in engine.js
+```
+```
+```
+```
+Now verify Node.js still imports cleanly:
+Running node --input-type=module --eval &quot;import &#39;./src/engine.js&#39;&quot; 2&gt;&amp;1 ; echo &quot;exit:.... node --input-type=module --eval "import './src/engine.js'" 2>&1 ; echo "exit: $LASTEXITCODE"
+Clean. Here's exactly what changed in
+src/engine.js (/c:/nbs/afish/src/engine.js)
+:
+**1. Static
+readline (c:\nbs\afish\src\engine.js:158)
+import removed** (line 55)  
+```
+- import * as readline from 'node:readline';
+```
+The
+node:readline (c:\nbs\afish\src\engine.js:158)
+specifier causes a browser bundler / native ESM browser import to throw immediately, before any code runs.
+**2.
+_installCliKeyboardAdapter (c:\nbs\afish\src\engine.js:140)
+is now async** with a browser guard at the top and a dynamic import:
+```
+async function _installCliKeyboardAdapter(opts = {}) {
+  if (_cliAdapterInstalled) return;
+  // Browser guard — typeof avoids ReferenceError on bare `process`
+  if (typeof process === 'undefined' || !process.stdin) return;
+  if (!process.stdin.isTTY) { ... return; }
+  // Only reached in a real Node.js TTY — safe to dynamically import
+  const readline = await import('node:readline');
+  ...
+}
+```
+The dynamic
+import('node:readline') (c:\nbs\afish\src\engine.js:158)
+is only ever reached inside Node.js with a TTY, so browsers never attempt to resolve it.
+**3.
+boot() (c:\nbs\afish\src\engine.js:243)
+awaits the adapter call** (now async):
+```
+- _installCliKeyboardAdapter({ silent: opts.silent ?? false });
++ await _installCliKeyboardAdapter({ silent: opts.silent ?? false });
+```
+4. Ignition switch has a browser guard at the top:
+```
+(async () => {
+  // Browser guard — browserAdapter.js calls boot() explicitly
+  if (typeof process === 'undefined') return;
+  if (!process.argv[1]) return;
+  ...
+})();
+```
+In a browser
+process (c:\nbs\afish\src\engine.js:145)
+is undefined, so the IIFE returns immediately without touching
+process.argv (c:\nbs\afish\src\engine.js:145)
+or
+pathToFileURL (c:\nbs\afish\src\engine.js:428)
+.
