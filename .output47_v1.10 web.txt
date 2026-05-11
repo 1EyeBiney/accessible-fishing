@@ -1,0 +1,54 @@
+Semantic workspace search is not currently available
+Thinking: Let me read the relevant existing files to understand the codebase before creating the new files.
+Read audioEngine.js, lines 1 to 80
+Read eventBus.js, lines 1 to 60
+Read inputAdapter.js, lines 1 to 60
+Read inputAdapter.js, lines 50 to 50
+Searched for text export (**/src/core/eventBus.js), 1 result. Files: c:\nbs\afish\src\core\eventBus.js
+Searched for text export (**/src/core/inputAdapter.js), 1 result. Files: c:\nbs\afish\src\core\inputAdapter.js
+Searched for text export (**/src/audio/audioEngine.js), 3 results. Files: c:\nbs\afish\src\audio\audioEngine.js, c:\nbs\afish\src\audio\audioEngine.js, c:\nbs\afish\src\audio\audioEngine.js
+Read inputAdapter.js, lines 348 to 360
+Now I have everything I need.
+Created 2 todos. 2 items: Create index.html (in-progress); Create src/browserAdapter.js (not-started)
+Created index.html
+Starting: Create src/browserAdapter.js (2/2). 2 items: Create index.html (completed); Create src/browserAdapter.js (in-progress)
+Created browserAdapter.js
+Completed: Create src/browserAdapter.js (2/2). 2 items: Create index.html (completed); Create src/browserAdapter.js (completed)
+Both files are created. Here's a summary of what was built:
+index.html (/c:/nbs/afish/index.html)
+High-contrast dark theme (`#0a0a0a` bg, `#00d4ff` accent) with CSS custom properties
+`#start-btn` — full-width, 64 px tall, `autofocus`, disabled state styled; receives `aria-describedby` hint text
+`#announcer` — visually-hidden via the clip-path SR trick (`position:absolute; width:1px; height:1px; clip:rect(0,0,0,0)`); `aria-live="assertive"` + `aria-atomic="true"` + `role="status"` — in the DOM **before** the script so screen readers register it as a live region first
+`#status-display` — visible polite region for mode/profile readouts
+`#error-panel` — hidden until a boot failure; revealed with
+data-visible (c:\nbs\afish\src\audio\audioEngine.js:289)
+attribute
+Skip-to-content link, keyboard legend
+<details> (c:\nbs\afish\src\engine.js:352)
+, WCAG 2.5.5 touch targets
+`
+src/browserAdapter.js (/c:/nbs/afish/src/browserAdapter.js)
+-
+_KEY_MAP (c:\nbs\afish\src\engine.js:89)
+keyed by
+event.code (c:\nbs\afish\src\audio\audioEngine.js:1209)
+(layout-independent physical keys), 14 entries matching the CLI map
+`keydown`/`keyup` listeners route through
+inputAdapter.keyDown/keyUp (c:\nbs\afish\src\core\inputAdapter.js:162)
+with &#39;browser-keyboard&#39; source tag; calls
+event.preventDefault() (c:\nbs\afish\src\audio\audioEngine.js:1209)
+on mapped keys to block browser scroll/submit
+`_engineReady` flag gates routing until after
+boot() (c:\nbs\afish\src\engine.js:230)
+resolves — no pre-boot key leaks
+`_handleStartClick()` — the Web Audio user-gesture gate: calls
+audioEngine.init({ volume: 0.3 }) (c:\nbs\afish\src\audio\audioEngine.js:56)
+synchronously first (inside the click dispatch), then
+await boot() (c:\nbs\afish\src\engine.js:230)
+;
+audioEngine.init() (c:\nbs\afish\src\audio\audioEngine.js:147)
+idempotency means the second call from
+boot() (c:\nbs\afish\src\engine.js:230)
+is a safe no-op
+`UI_ANNOUNCE` → `_announce()` — uses clear-then-rAF technique so screen readers see a genuine DOM mutation on repeated announcements
+`ENGINE_BOOTED` + `MODE_CHANGED` → `#status-display` (polite) and `_announce()` (assertive) so every mode transition is spoken
