@@ -62,8 +62,9 @@ import {
   transitionTo,
   currentMode,
 } from './core/modeRouter.js';
-import * as profileStore  from './profile/profileStore.js';
-import * as audioEngine   from './audio/audioEngine.js';
+import * as profileStore from './profile/profileStore.js';
+import * as audioEngine  from './audio/audioEngine.js';
+import { registerUiManifests } from './ui/index.js';
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -279,7 +280,12 @@ async function boot(opts = {}) {
   // on window) is wired separately in the browser entry point.
   await _installCliKeyboardAdapter({ silent: opts.silent ?? false });
 
-  // ── Step 5: Transition to FOCUS_TRAP ─────────────────────────────────────
+  // ── Step 4b: Register UI Mode Manifests ─────────────────────────────
+  // All UI mount manifests (focusTrap, hub, etc.) must be registered with
+  // modeRouter BEFORE the first transitionTo() call so their onMount()
+  // callbacks fire correctly when FOCUS_TRAP is entered below.
+  // registerUiManifests() is idempotent — safe to call more than once.
+  registerUiManifests(); ─────────────────────────────────────
   // D-023: First user-facing mode after BOOT is FOCUS_TRAP, which holds
   // screen-reader focus until the player issues a confirmed input.
   // transitionTo() from BOOT → FOCUS_TRAP:
