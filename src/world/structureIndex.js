@@ -385,3 +385,90 @@ export function scoringConstants() {
 export function _clear() {
   _index.clear();
 }
+
+// ---------------------------------------------------------------------------
+// Dev-time mock seed — DOCK POI
+// ---------------------------------------------------------------------------
+// The full world generator is not yet connected, so candidatesForPoi('DOCK')
+// would return [] on every boot. These three hand-crafted candidates give the
+// Fish Finder (and the casting FSM) something concrete to work with until a
+// real world is generated.
+//
+// Candidate schema matches _buildCandidate() output exactly so that fishFinder
+// augmentation (spook / pressure overlay) works without modification.
+// Remove or gate this block behind a flag when worldMap.rebuild() is wired.
+// ---------------------------------------------------------------------------
+_index.set('DOCK', [
+  {
+    tileId:         'DOCK_mock_pilings',
+    coord:          { x: 0, y: 0 },
+    offset:         { dx: 0, dy: -2 },
+    depthM:         2.5,
+    bottomType:     'GRAVEL',
+    coverType:      'DOCK',
+    coverDensity:   0.8,
+    tags:           ['AMBUSH_POINT', 'SHADED_DAY'],
+    snagRisk:       0.4,
+    shadeFactor:    0.7,
+    draftClass:     'SHALLOW',
+    fromDockMin:    0,
+    structureScore: _computeStructureScore({
+      traits: {
+        tags:    ['AMBUSH_POINT', 'SHADED_DAY'],
+        cover:   { type: 'DOCK',    density: 0.8, snagRisk: 0.4, shadeFactor: 0.7 },
+        depth:   { minM: 2.5 },
+        bottom:  { primary: 'GRAVEL' },
+        reach:   { draftClass: 'SHALLOW', fromDockMin: 0 },
+      },
+    }),
+    label: 'Dock, 2.5m, gravel, ambush point',
+  },
+  {
+    tileId:         'DOCK_mock_weedbed',
+    coord:          { x: 3, y: 1 },
+    offset:         { dx: 3, dy: 1 },
+    depthM:         1.5,
+    bottomType:     'SAND',
+    coverType:      'WEEDBED',
+    coverDensity:   0.6,
+    tags:           ['WEEDBED_EDGE'],
+    snagRisk:       0.3,
+    shadeFactor:    0.2,
+    draftClass:     'SHALLOW',
+    fromDockMin:    2,
+    structureScore: _computeStructureScore({
+      traits: {
+        tags:    ['WEEDBED_EDGE'],
+        cover:   { type: 'WEEDBED', density: 0.6, snagRisk: 0.3, shadeFactor: 0.2 },
+        depth:   { minM: 1.5 },
+        bottom:  { primary: 'SAND' },
+        reach:   { draftClass: 'SHALLOW', fromDockMin: 2 },
+      },
+    }),
+    label: 'Weed bed, 1.5m, sand, weed edge',
+  },
+  {
+    tileId:         'DOCK_mock_dropoff',
+    coord:          { x: -2, y: 4 },
+    offset:         { dx: -2, dy: 4 },
+    depthM:         5.0,
+    bottomType:     'ROCK',
+    coverType:      'NONE',
+    coverDensity:   0.0,
+    tags:           ['DROP_OFF_EDGE', 'TRANSITION'],
+    snagRisk:       0.1,
+    shadeFactor:    0.0,
+    draftClass:     'MEDIUM',
+    fromDockMin:    5,
+    structureScore: _computeStructureScore({
+      traits: {
+        tags:    ['DROP_OFF_EDGE', 'TRANSITION'],
+        cover:   { type: 'NONE', density: 0.0, snagRisk: 0.1, shadeFactor: 0.0 },
+        depth:   { minM: 5.0 },
+        bottom:  { primary: 'ROCK' },
+        reach:   { draftClass: 'MEDIUM', fromDockMin: 5 },
+      },
+    }),
+    label: 'Open water, 5.0m, rock, drop-off edge',
+  },
+]);

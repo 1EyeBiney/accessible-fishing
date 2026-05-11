@@ -124,6 +124,20 @@ let _fightActive = false;
 let _finderGraph = null;
 
 /**
+ * Handle for the repeating sonar-scan ping interval.
+ * Cleared on scan completion or FISH_FINDER_CANCELLED.
+ * @type {ReturnType<typeof setInterval>|null}
+ */
+let _scanIntervalId = null;
+
+/**
+ * Handle for the auto-terminate timeout that kills _scanIntervalId after
+ * payload.scanDurationMs to prevent audio leaks (per task requirement).
+ * @type {ReturnType<typeof setTimeout>|null}
+ */
+let _scanTimeoutId = null;
+
+/**
  * Collected bus unsubscribe functions, kept for a clean engine teardown path.
  * @type {Array<() => void>}
  */
@@ -584,6 +598,50 @@ function _playUI_transition() {
 // Category 2 — Sonar / Fish Finder Synthesis Recipes
 // Source: afish_synth_tester.html → playSonar(), extended with D-065 math
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Scanning pulse — clean 440 Hz sine blip with a fast attack/decay (200 ms).
+ * Distinct from the full D-065 finder ping (_playFinderPingImpl) which fires
+ * once with depth/pressure/presence data when results are ready. This cue fires
+ * every ~1 000 ms DURING the scan to give the player continuous audio feedback
+ * that the device is actively sweeping.
+ *
+ * Signal chain: OscillatorNode → GainNode → _masterGain
+ * (Does not route through the spook shelf — the player hasn't locked on yet.)
+ */
+function _playSonar_scanPing() {
+  const now  = _actx.currentTime;
+  const osc  = _actx.createOscillator();
+  const gain = _actx.createGain();
+  osc.connect(gain);
+  gain.connect(_masterGain);
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(440, now);
+  osc.frequency.exponentialRampToValueAtTime(300, now + 0.18);  // soft downward tail
+
+  gain.gain.setValueAtTime(0,    now);
+  gain.gain.linearRampToValueAtTime(0.25, now + 0.02);           // fast attack
+  gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);     // exponential decay
+
+  osc.start(now);
+  osc.stop(now + 0.20);
+}
+
+/**
+ * Cancel the active scan audio loop immediately.
+ * Safe to call when no loop is running.
+ */
+function _clearScanLoop() {
+  if (_scanIntervalId !== null) {
+    clearInterval(_scanIntervalId);
+    _scanIntervalId = null;
+  }
+  if (_scanTimeoutId !== null) {
+    clearTimeout(_scanTimeoutId);
+    _scanTimeoutId = null;
+  }
+}
 
 /**
  * Structure echo — descending triangle bloom (150 → 80 Hz, 850 ms).
@@ -1218,8 +1276,52 @@ function _registerBusListeners() {
   }));
 
   // ── Fish Finder / Sonar ───────────────────────────────────────────────────
+  // FISH_FINDER_SCANNING fires at the start of every scan.
+  // A repeating sonar ping plays every ~1 000 ms to signal that the device is
+  // actively sweeping. The loop is guarded by two mechanisms:
+  //   1. A setTimeout for payload.scanDurationMs that clears the interval
+  //      automatically — prevents audio leaks if FISH_FINDER_RESULTS never fires
+  //      (e.g. if scan() is modified to resolve early in a future release).
+  //   2. FISH_FINDER_CANCELLED clears both handles immediately (early abort).
+  _unsubs.push(bus.on('FISH_FINDER_SCANNING', (evt) => {
+    const scanDurationMs = evt?.scanDurationMs ?? 10_000;
+
+    if (!_IS_BROWSER || !_actx) {
+      _logAudio('sonar', 'scan_start', { scanDurationMs, poiId: evt?.poiId, tier: evt?.tier });
+      return;
+    }
+
+    // Defensive clear of any previous scan loop that wasn't terminated cleanly.
+    _clearScanLoop();
+
+    // Play first pulse immediately so the player hears feedback without delay.
+    _playSonar_scanPing();
+
+    // Repeat every 1 000 ms for the scan duration.
+    _scanIntervalId = setInterval(() => {
+      _playSonar_scanPing();
+    }, 1_000);
+
+    // Auto-terminate after scanDurationMs (D-021: audio must not leak).
+    _scanTimeoutId = setTimeout(() => {
+      _clearScanLoop();
+    }, scanDurationMs);
+  }));
+
+  // FISH_FINDER_CANCELLED — player aborted the scan early (e.g. moved away).
+  // Clear the interval immediately; no sound needed (abrupt silence is correct).
+  _unsubs.push(bus.on('FISH_FINDER_CANCELLED', () => {
+    if (!_IS_BROWSER || !_actx) {
+      _logAudio('sonar', 'scan_cancelled');
+      return;
+    }
+    _clearScanLoop();
+  }));
+
   // D-065: use the top-ranked candidate for all ping parameters.
+  // Also clear the scan-ping loop — results mean the scan has completed.
   _unsubs.push(bus.on('FISH_FINDER_RESULTS', (evt) => {
+    _clearScanLoop();
     const top = evt?.candidates?.[0] ?? {};
     const params = {
       depthM:       top.depthM       ?? 3,
