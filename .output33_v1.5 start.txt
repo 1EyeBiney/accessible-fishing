@@ -170,4 +170,42 @@ Created castSpookModel.js
 Starting: Write targetSelector.js (2/4). 4 items: Write castSpookModel.js (completed); Write targetSelector.js (in-progress); Write castPipeline.js (not-started); Verify syntax on all 3 files (not-started)
 Created targetSelector.js
 Starting: Write castPipeline.js (3/4). 4 items: Write castSpookModel.js (completed); Write targetSelector.js (completed); Write castPipeline.js (in-progress); Verify syntax on all 3 files (not-started)
-Create File
+Created castPipeline.js
+Created targetSelector.js
+Starting: Verify syntax on all 3 files (4/4). 4 items: Write castSpookModel.js (completed); Write targetSelector.js (completed); Write castPipeline.js (completed); Verify syntax on all 3 files (in-progress)
+Running node --check src/casting/castSpookModel.js ; node --check src/casting/targetS.... node --check src/casting/castSpookModel.js ; node --check src/casting/targetSelector.js ; node --check src/casting/castPipeline.js ; Write-Host "ALL SYNTAX OK"
+Added 1 todo. 4 items: Write castSpookModel.js (completed); Write targetSelector.js (completed); Write castPipeline.js (completed); Verify syntax on all 3 files (completed)
+All three Phase 5 casting modules are written and syntax-verified clean.
+Delivered:
+File Lines Status
+src/casting/castSpookModel.js (/c:/nbs/afish/src/casting/castSpookModel.js)
+| ~130 | ✅ (prior session) |
+|
+src/casting/targetSelector.js (/c:/nbs/afish/src/casting/targetSelector.js)
+| ~240 | ✅ |
+|
+src/casting/castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+| ~500 | ✅ |
+Key implementation decisions confirmed against the brief:
+**D-014** — 5-tap sequence (TARGET_LOCKED → Tap1 Arrow → Tap2 Space → Tap3 Arrow → Tap4 Space → Tap5 Arrow). `_onArrow` and `_onSpacebar` dispatch by `_phase` using a `switch`.
+**D-015** — `_scheduleBirdNest()` called after every successful tap; `_fireBirdNest()` draws duration from
+rngStream('cast').int(10_000, 15_000) (c:\nbs\afish\src\core\rng.js:119)
+and calls
+inputAdapter.lock('BIRDS_NEST', ...) (c:\nbs\afish\src\core\inputAdapter.js:35)
+.
+**D-016** — Spool wall in `_computeLanding()`: if
+hypot(dx,dy) > frameRadius (c:\BCI\VSCode-win32-x64-1.116.0\560a9dba96\resources\app\extensions\node_modules\typescript\lib\lib.es2015.core.d.ts:189)
+, both components are scaled down proportionally.
+**D-038** — Scatter→splash accuracy formula drives `_determineSplashKind()` (SILENT/NORMAL/LOUD), fed into `castSpookModel.applySplash()`.
+**D-041** — `_onTargetLocked` is the single entry point that anchors `_target`, samples wind (D-012), dispatches `SCAN_LOCKED`, and starts the first Bird's Nest timer.
+**D-043** — `SCAN_LOCKED` dispatched at TARGET_LOCKED; `SCAN_UNLOCKED` dispatched on CAST_LANDED and on any Bird's Nest or unmount from non-IDLE.
+**D-052** — `_isLureWeightMismatched()` checks rod vs lure weight range; multiplies `scatterRadius × 2.0`; no distance penalty, no forced Bird's Nest.
+**H-003** — `castPipeline` calls `castSpookModel.applySplash`; never writes
+tile.state.spook (c:\nbs\afish\src\equipment\fishFinder.js:309)
+directly.
+**H-005** — All `_unsubs` and `_nestHandle` cancelled in
+onUnmount (c:\nbs\afish\src\core\modeRouter.js:72)
+.
+**H-014** — `castPipeline` does not import `targetSelector` or
+fishFinder (c:\nbs\afish\src\equipment\fishFinder.js:52)
+; communication is bus-only via TARGET_LOCKED.

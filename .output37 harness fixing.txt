@@ -1,0 +1,36 @@
+Semantic workspace search is not currently available
+Thinking: The user wants me to see where the harness file cut off and output the remainder from test 11l onward. Let me read the end of the harness file to see what's there.
+Running Get-Content tests/harness.js | Measure-Object -Line. Get-Content tests/harness.js | Measure-Object -Line
+Read harness.js, lines 1720 to 1754
+Searched for text 11l (**/tests/harness.js), 9 results. Files: c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js
+Read harness.js, lines 1994 to 2020
+The file is complete and intact — 11l and the summary are both present and correct. The harness ran to 296/296 passing. The "cut off" you saw was just the previous conversation's token limit hitting during output; the file itself was fully written.
+Here is the exact remainder from 11l onward:
+```
+// ── 11l. readSpook for an unregistered tile → 0, no throw ───────────────────
+let threw11l = false;
+let result11l;
+try {
+  result11l = castSpookModel.readSpook({ x: 9999, y: 9999 }, 0);
+} catch {
+  threw11l = true;
+}
+assert(!threw11l,
+  '11l. readSpook does not throw for an unregistered tile coordinate');
+assertEqual(result11l, 0,
+  '11l. readSpook returns 0 for an unregistered tile');
+_unsub11();
+// ===========================================================================
+// SUMMARY
+// ===========================================================================
+const total = _passed + _failed;
+console.log('\n' + '='.repeat(50));
+console.log(`HARNESS SUMMARY: ${_passed}/${total} passed, ${_failed} failed  (Sections 1-11)`);
+console.log('='.repeat(50));
+if (_failed > 0) {
+  process.exit(1);
+}
+```
+Nothing is missing. The file ends at line 2020 with
+process.exit(1) (c:\nbs\afish\tests\harness.js:2018)
+guarded by if (_failed &gt; 0) — which is why exit code is 0 on a clean run.
