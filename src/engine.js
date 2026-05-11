@@ -67,6 +67,27 @@ import * as audioEngine  from './audio/audioEngine.js';
 import { registerUiManifests } from './ui/index.js';
 
 // ---------------------------------------------------------------------------
+// Gameplay system imports (side-effect — modules self-register via
+// registerMountManifest at evaluation time, or expose API called during play)
+// ---------------------------------------------------------------------------
+
+// Equipment
+import './equipment/fishFinder.js';        // scan() / cancel() API; consumed by tournamentActive
+
+// Casting pipeline — targetSelector, castPipeline, and fightLoop each call
+// modeRouter.registerMountManifest() at the top level, so a bare import is
+// all that is required to wire them into the TOURNAMENT_ACTIVE mount slot.
+import './casting/targetSelector.js';      // FISH_FINDER_RESULTS → TARGET_LOCKED menu FSM
+import './casting/castPipeline.js';        // TARGET_LOCKED → 5-tap cast → CAST_LANDED
+
+// Fish systems
+import './fish/fightLoop.js';              // BITE_NIBBLE / BITE_THUD → fight physics
+import './fish/fishBehavior.js';           // strike evaluation, bite scheduling, pressure
+
+// Tournament AI
+import './tournament/competitorAI.js';     // simulated bot AI; self-registers for TOURNAMENT_ACTIVE
+
+// ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------
 
