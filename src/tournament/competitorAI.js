@@ -502,7 +502,10 @@ function _buildLureCategories(lureRotations) {
  */
 function _collectPoiIds() {
   const ids = new Set();
-  for (const draftClass of ['SHALLOW', 'MEDIUM', 'DEEP']) {
+  // poisByDraft() accepts boat draft-class names ('ROWBOAT', 'BASS_BOAT',
+  // 'TOURNAMENT_BOAT'), not POI water-depth class names. Query all three
+  // boat classes to collect the full set of reachable POI IDs.
+  for (const draftClass of ['ROWBOAT', 'BASS_BOAT', 'TOURNAMENT_BOAT']) {
     try {
       const poiList = poiGraph.poisByDraft(draftClass);
       if (Array.isArray(poiList)) {
