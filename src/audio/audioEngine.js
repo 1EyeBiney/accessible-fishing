@@ -95,7 +95,7 @@ let _actx       = null;
 let _masterGain = null;
 
 /** Current master volume [0..1]. */
-let _currentVol = 0.3;
+let _currentVol = 1.0;
 
 /**
  * Pre-built fight voice graph (H-009).
@@ -175,7 +175,7 @@ function init(opts = {}) {
     return;
   }
 
-  _currentVol = Math.max(0, Math.min(1, opts.volume ?? 0.3));
+  _currentVol = Math.max(0, Math.min(1, opts.volume ?? 1.0));
 
   _masterGain = _actx.createGain();
   _masterGain.gain.value = _currentVol;

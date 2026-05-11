@@ -125,6 +125,21 @@ function _announceCurrentCandidate(atMs) {
     count: _candidates.length,
     atMs,
   });
+
+  // TTS read-out for the focused candidate (D-042 accessibility).
+  // Format: "<label>. <coverType>, <depthM>m deep. <idx+1> of <count>."
+  const coverLabel = (candidate.coverType ?? 'Open water')
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/^./, c => c.toUpperCase());
+  const depth = typeof candidate.depthM === 'number'
+    ? `${candidate.depthM.toFixed(1)} metres deep`
+    : '';
+  const position = `${_cursorIdx + 1} of ${_candidates.length}`;
+  const parts = [candidate.label ?? coverLabel];
+  if (depth) parts.push(depth);
+  parts.push(position);
+  bus.emit('UI_ANNOUNCE', { text: parts.join('. ') + '.' });
 }
 
 /**
@@ -151,10 +166,19 @@ function _openMenu(candidates, tier, poiId, atMs) {
     atMs,
   });
 
-  // Announce cursor position immediately so the player knows where focus lands.
-  if (_menuOpen) {
-    _announceCurrentCandidate(atMs);
+  if (candidates.length === 0) {
+    bus.emit('UI_ANNOUNCE', { text: 'No fishing spots detected. Re-scan to try again.' });
+    return;
   }
+
+  // Announce the count + controls so the player knows how to navigate the list.
+  bus.emit('UI_ANNOUNCE', {
+    text: `${candidates.length} location${candidates.length === 1 ? '' : 's'} found. ` +
+          'Use up and down arrows to browse. Press Spacebar to lock a target.',
+  });
+
+  // Announce cursor position immediately so the player knows where focus lands.
+  _announceCurrentCandidate(atMs);
 }
 
 /**
