@@ -1,0 +1,43 @@
+Thinking: Let me read the full fishFinder.js file first to understand its complete structure before making changes.
+Read fishFinder.js, lines 1 to 60
+Read fishFinder.js, lines 60 to 130
+Read fishFinder.js, lines 130 to 250
+Read fishFinder.js, lines 250 to 417
+Now I have the full file. The only change needed is: add
+modeRouter (c:\nbs\afish\src\core\modeRouter.js:36)
+to the imports, and append the mount manifest block. The file already imports
+bus (c:\nbs\afish\src\core\eventBus.js:21)
+.
+Replacing 9 lines with 54 lines in fishFinder.js
+```
+```
+```
+```
+Let me verify both edits landed cleanly:
+Read fishFinder.js, lines 55 to 62
+Read fishFinder.js, lines 410 to 462
+Both edits are clean. Here's what changed in
+src/equipment/fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+:
+**Added
+modeRouter (c:\nbs\afish\src\core\modeRouter.js:36)
+import** alongside the existing imports.
+**Appended a
+registerMountManifest (c:\nbs\afish\src\core\modeRouter.js:91)
+block** at the bottom with:
+id: 'fishFinder:input' (c:\nbs\afish\src\core\clock.js:233)
+, scoped to
+MODES.TOURNAMENT_ACTIVE (c:\nbs\afish\src\core\modeRouter.js:57)
+-
+onMount (c:\nbs\afish\src\core\modeRouter.js:71)
+— subscribes
+INPUT_ENTER → scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+. No extra guard needed;
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+already handles SCAN_LOCKED, no active POI, and in-flight scan supersession internally (D-043).
+onUnmount (c:\nbs\afish\src\core\modeRouter.js:72)
+— drains
+_inputUnsubs (c:\nbs\afish\src\equipment\fishFinder.js:428)
+, then calls
+cancel() (c:\nbs\afish\src\core\clock.js:283)
+to release any pending clock handle so FISH_FINDER_RESULTS cannot fire after the mode exits (H-005).

@@ -52,6 +52,7 @@
 import * as bus            from '../core/eventBus.js';
 import * as clock          from '../core/clock.js';
 import * as stateStore     from '../core/stateStore.js';
+import * as modeRouter     from '../core/modeRouter.js';
 import * as boats          from './boats.js';
 import * as worldMap       from '../world/worldMap.js';
 import * as structureIndex from '../world/structureIndex.js';
@@ -414,3 +415,47 @@ function _computeSpeciesBand(coord) {
 // Export MAX_PRESSURE so synthGraph.js can use it for D-065 noise-gain math
 // without needing to hardcode the constant independently.
 export { MAX_PRESSURE };
+
+// ============================================================================
+// Mount manifest — TOURNAMENT_ACTIVE (H-005)
+// ============================================================================
+
+/**
+ * Unsubscribe functions for the input bindings installed in onMount.
+ * Drained in onUnmount to satisfy H-005 (no stray listeners after unmount).
+ * @type {Array<() => void>}
+ */
+let _inputUnsubs = [];
+
+modeRouter.registerMountManifest({
+  id:    'fishFinder:input',
+  modes: [modeRouter.MODES.TOURNAMENT_ACTIVE],
+
+  /**
+   * Subscribe to INPUT_ENTER so the player can trigger a scan by pressing
+   * Enter while in TOURNAMENT_ACTIVE mode.
+   *
+   * INPUT_ENTER is the canonical "use active tool" binding (D-010 / D-029).
+   * scan() already handles all blocking conditions internally (D-043 scan
+   * lock, no active POI, scan-in-progress supersession) so no additional
+   * guard is needed here.
+   */
+  onMount(_nextMode, _prevMode) {
+    _inputUnsubs = [
+      bus.on('INPUT_ENTER', scan),
+    ];
+  },
+
+  /**
+   * Remove the INPUT_ENTER subscription and cancel any in-progress scan.
+   * H-005: every handle acquired in onMount must be released here.
+   */
+  onUnmount(_prevMode, _nextMode) {
+    for (const unsub of _inputUnsubs) unsub();
+    _inputUnsubs = [];
+
+    // Cancel any scan that was running when the mode ended so the clock
+    // handle is released and FISH_FINDER_RESULTS is not emitted after unmount.
+    cancel();
+  },
+});
