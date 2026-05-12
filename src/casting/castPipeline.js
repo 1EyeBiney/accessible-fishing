@@ -771,6 +771,19 @@ function _buildLureOptions() {
     };
   });
 
+  // Dev safety net: ensure LURE_SELECT can always be exercised even when
+  // activeTackle.lures is empty (e.g. developer bypasses Hub during testing).
+  // A real tackle-box validation gate belongs in Hub/equipment UI, not here.
+  if (options.length === 0) {
+    options.push({
+      lureId:       'dev_mock_lure',
+      category:     'Dev Mock Lure',
+      tier:         1,
+      matchScore:   1.0,
+      sweetWeightOk: true,
+    });
+  }
+
   // Prefer a sweet-weight lure as the default; fall back to first entry.
   const sweet             = options.find(o => o.sweetWeightOk);
   const recommendedLureId = sweet?.lureId ?? options[0]?.lureId ?? null;
@@ -793,17 +806,21 @@ function _enterLureSelect(atMs) {
   _selectedLureIdx = Math.max(0, options.findIndex(o => o.lureId === recommendedLureId));
 
   _phase = 'LURE_SELECT';
+
+  // LURE_OPTIONS MUST be emitted before CAST_PHASE_CHANGED so the UI
+  // Announcer has the lure list in hand before it tries to read
+  // _lureOptions[selectedLureIdx] in response to the phase event.
+  bus.emit('LURE_OPTIONS', {
+    lures:             options,
+    recommendedLureId,
+    atMs,
+  });
+
   _dispatchPhase({
     phase:           'LURE_SELECT',
     target:          _target,
     selectedLureIdx: _selectedLureIdx,
     lureCount:       options.length,
-    atMs,
-  });
-
-  bus.emit('LURE_OPTIONS', {
-    lures:             options,
-    recommendedLureId,
     atMs,
   });
 }
@@ -871,8 +888,13 @@ function _onArrowUp(evt) {
 
     // ── LURE_SELECT: cursor up (D-072) ──────────────────────────────────────
     case 'LURE_SELECT': {
-      if (_lureOptions.length > 1) {
-        _selectedLureIdx = (_selectedLureIdx - 1 + _lureOptions.length) % _lureOptions.length;
+      if (_lureOptions.length > 0) {
+        // Only move the cursor when there are multiple options; but always
+        // dispatch so the UI Announcer reads the focused lure (e.g. the
+        // sole dev_mock_lure entry when the tackle box is empty).
+        if (_lureOptions.length > 1) {
+          _selectedLureIdx = (_selectedLureIdx - 1 + _lureOptions.length) % _lureOptions.length;
+        }
         _dispatchPhase({
           phase:           'LURE_SELECT',
           target:          _target,
@@ -937,8 +959,13 @@ function _onArrowDown(evt) {
 
   // ── LURE_SELECT: cursor down (D-072) ─────────────────────────────────────
   if (_phase === 'LURE_SELECT') {
-    if (_lureOptions.length > 1) {
-      _selectedLureIdx = (_selectedLureIdx + 1) % _lureOptions.length;
+    if (_lureOptions.length > 0) {
+      // Only move the cursor when there are multiple options; but always
+      // dispatch so the UI Announcer reads the focused lure (e.g. the
+      // sole dev_mock_lure entry when the tackle box is empty).
+      if (_lureOptions.length > 1) {
+        _selectedLureIdx = (_selectedLureIdx + 1) % _lureOptions.length;
+      }
       _dispatchPhase({
         phase:           'LURE_SELECT',
         target:          _target,

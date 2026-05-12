@@ -1,0 +1,109 @@
+Searched codebase for "SYSTEM OVERRIDE / BUG FIX: LURE SELECT SOFT-LOCK & RACE CONDITION
+We successfully implemented the Accessible Console, and it confirmed there are no syntax errors. We have discovered a logical soft-lock and an event race condition in src/casting/castPipeline.js.
+The Issues:
+**The Soft-Lock:** If a developer bypasses the Hub and enters the tournament with an empty tackle box, `_buildLureOptions` returns an empty array. The `LURE_SELECT` Spacebar handler checks `if (!chosen) break;` and silently fails, trapping the FSM in the menu forever.
+**The Race Condition:** In `_enterLureSelect`, you are calling `_dispatchPhase()` BEFORE emitting `LURE_OPTIONS`. This means the UI hears the phase change and attempts to read `_lureOptions[idx]` before it has actually received the updated list from the bus, resulting in silence.
+Your Task: Patch src/casting/castPipeline.js
+**Fix `_buildLureOptions()`:** If the `options` array is empty after mapping the active tackle, push a fallback mock lure so testing can continue: 
+`options.push({ lureId: 'dev_mock_lure', category: 'Dev Mock Lure', tier: 1, matchScore: 1.0, sweetWeightOk: true });`
+**Fix `_enterLureSelect()`:** Swap the order of emissions. You MUST emit `LURE_OPTIONS` first, and then call `_dispatchPhase()` second.
+**Fix `_onArrowUp` and `_onArrowDown`:** In the `LURE_SELECT` cases, the `if (_lureOptions.length > 1)` guard is preventing the UI Announcer from hearing the cursor if there is only 1 lure (like our mock lure). Change it to `if (_lureOptions.length > 0)`. While the index won't change if length is 1, you must still call `_dispatchPhase` so the UI Announcer reads the currently focused lure when the user taps an arrow key.
+Provide the fully updated, unabbreviated src/casting/castPipeline.js file.", 23 results. Files: c:\nbs\afish\.output64_part 2 start, stuck maybe.txt, c:\nbs\afish\.output64_part 2 start, stuck maybe.txt, c:\nbs\afish\.output65_part 2, after stage 2, stuck again.txt, c:\nbs\afish\.output66_part 2, token limit 3rd time.txt, c:\nbs\afish\.output66_part 2, token limit 3rd time.txt, c:\nbs\afish\.output67_part 2, try 4 maybe.txt, c:\nbs\afish\.output67_part 2, try 4 maybe.txt, c:\nbs\afish\.output67_part 2, try 4 maybe.txt, c:\nbs\afish\.output68_part 3 of ammends start.txt, c:\nbs\afish\.output68_part 3 of ammends start.txt, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\ui\tournamentActive.js, c:\nbs\afish\src\ui\tournamentActive.js, c:\nbs\afish\src\ui\tournamentActive.js
+Thinking: The user wants me to patch `src/casting/castPipeline.js` with three specific fixes. Let me first read the current state of the file to understand what's there, then make the surgical edits. They also want the fully updated, unabbreviated file provided.
+Wait, but the reminder instructions say "Do NOT create markdown files to document changes unless requested." They want the fully updated file shown, but since it exists in the workspace, I should just make the edits and show the result.
+Actually, re-reading: "Provide the fully updated, unabbreviated `src/casting/castPipeline.js` file." - they want to see the full file content. I'll make the edits and then read the file to show it.
+I need to check the current file to see what needs to be replaced.
+Let me read the current file first to get exact strings for the replacements.
+Read castPipeline.js, lines 1 to 100
+Read castPipeline.js, lines 100 to 250
+Read castPipeline.js, lines 250 to 420
+Read castPipeline.js, lines 420 to 600
+Read castPipeline.js, lines 600 to 800
+Read castPipeline.js, lines 800 to 1000
+Read castPipeline.js, lines 1000 to 1100
+Read castPipeline.js, lines 1100 to 1176
+Thinking: Now I have the full file. Let me identify the three fixes needed:
+1. **Fix `_buildLureOptions()`:** Add a fallback mock lure if `options` is empty.
+Current code:
+```javascript
+  const options = lures.map(entry => {
+    // ...
+  });
+  // Prefer a sweet-weight lure as the default; fall back to first entry.
+  const sweet             = options.find(o => o.sweetWeightOk);
+  const recommendedLureId = sweet?.lureId ?? options[0]?.lureId ?? null;
+  return { options, recommendedLureId };
+```
+I need to insert a check after the map that pushes a dev mock lure if the options array ends up empty, ensuring there's always at least one option available.
+2. **Fix `_enterLureSelect()`:** Swap the order of `_dispatchPhase` and `bus.emit('LURE_OPTIONS')`.
+Current code:
+```javascript
+  _phase = 'LURE_SELECT';
+  _disp
+```
+Fixing the event emission order...
+```
+javascript
+  bus.emit('LURE_OPTIONS', {
+    lures:             options,
+    recommendedLureId,
+    atMs,
+  });
+  _dispatchPhase({
+    phase:           'LURE_SELECT',
+    target:          _target,
+    selectedLureIdx: _selectedLureIdx,
+    lureCount:       options.length,
+    atMs,
+  });
+```
+Need to swap to emit `LURE_OPTIONS` first, then `_dispatchPhase`.
+3. **Fix `_onArrowUp` LURE_SELECT case:** Change `_lureOptions.length > 1` to `_lureOptions.length > 0`, and always call `_dispatchPhase`.
+Current code:
+```javascript
+    case 'LURE_SELECT': {
+      if (_lureOptions.length > 
+```
+Fixing the arrow key handler...
+Updating the index rotation logic so it only cycles when there's more than one option, but still announces the selection whenever options exist. I need to apply these changes to the full file and then display the complete updated version.
+I have the full file. All four target locations identified. Making all three fixes simultaneously:
+Created 4 todos. 4 items: Fix _buildLureOptions fallback mock (in-progress); Fix _enterLureSelect emission order (not-started); Fix _onArrowUp LURE_SELECT guard (not-started); Fix _onArrowDown LURE_SELECT guard (not-started)
+Replacing 47 lines with 74 lines in castPipeline.js
+```
+```
+```
+```
+Completed: Fix _buildLureOptions fallback mock (1/4). 4 items: Fix _buildLureOptions fallback mock (completed); Fix _enterLureSelect emission order (completed); Fix _onArrowUp LURE_SELECT guard (completed); Fix _onArrowDown LURE_SELECT guard (completed)
+Checked castPipeline.js, no problems found
+Clean. Here's the full updated file for review:
+Read castPipeline.js
+Three patches applied, no errors. Here's a summary of every change:
+**Fix 1 —
+_buildLureOptions (c:\nbs\afish\src\casting\castPipeline.js:739)
+: empty-tackle soft-lock prevention**
+After the
+lures.map(...) (c:\nbs\afish\src\casting\castPipeline.js:594)
+, if
+options.length === 0 (c:\nbs\afish\src\casting\castPipeline.js:751)
+a dev_mock_lure sentinel is pushed. The if (!chosen) break in the Spacebar handler can now never silently stall the FSM — there will always be at least one selectable entry. The comment is explicit that a real validation gate belongs in Hub UI, not the pipeline.
+**Fix 2 —
+_enterLureSelect (c:\nbs\afish\src\casting\castPipeline.js:803)
+: event ordering race**
+bus.emit('LURE_OPTIONS', …) (c:\nbs\afish\src\core\eventBus.js:21)
+is now called before
+_dispatchPhase(…) (c:\nbs\afish\src\casting\castPipeline.js:494)
+. tournamentActive's _onLureOptions handler runs first and caches the full lure list into
+_lureOptions (c:\nbs\afish\src\casting\castPipeline.js:301)
+. Only then does CAST_PHASE_CHANGED fire, so _onCastPhaseChanged (which indexes into
+_lureOptions (c:\nbs\afish\src\casting\castPipeline.js:301)
+) always finds the array populated.
+**Fix 3 —
+_onArrowUp (c:\nbs\afish\src\casting\castPipeline.js:884)
++
+_onArrowDown (c:\nbs\afish\src\casting\castPipeline.js:957)
+LURE_SELECT guards**
+Both changed from if (_lureOptions.length &gt; 1) to if (_lureOptions.length &gt; 0). The index update (
+% _lureOptions.length (c:\nbs\afish\src\casting\castPipeline.js:301)
+) is now nested inside an inner if (_lureOptions.length &gt; 1) guard so the cursor stays at 0 with a single option.
+_dispatchPhase (c:\nbs\afish\src\casting\castPipeline.js:494)
+is called unconditionally for any non-empty list, so the UI Announcer always gets a phase event and reads the focused lure aloud — even the mock sentinel.
