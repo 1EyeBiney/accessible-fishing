@@ -19,10 +19,17 @@
  *     Waiting for TARGET_LOCKED (emitted by targetSelector after player confirms).
  *     All input events are ignored in this phase.
  *
- *   ARMED  (entered on TARGET_LOCKED)
- *     Wind vector is sampled and held for the cast's lifetime (D-012).
- *     state.tournament.scanLocked is set → blocks new scans (D-043).
- *     Awaiting Tap 1 — ARROW_UP.  Arrow whiff timer running (D-015 rev).
+ *   LURE_SELECT  (entered on TARGET_LOCKED — D-072)
+ *     Wind vector sampled and held for the cast's lifetime (D-012).
+ *     D-071 rod auto-select writes cast.activeRodId (AUTO-SELECT ONLY).
+ *     state.tournament.scanLocked set → blocks new scans (D-043).
+ *     LURE_OPTIONS emitted; player cycles with ARROW_UP/DOWN, confirms with
+ *     SPACEBAR (→ LURE_LOCKED → ARMED), cancels with ESC (→ IDLE, scan unlocked).
+ *     No whiff timer in this phase.
+ *
+ *   ARMED  (entered on LURE_LOCKED)
+ *     Awaiting Tap 1 — ARROW_UP.  No whiff timer (D-015 v1.14: player may
+ *     sit here indefinitely before the backswing).
  *
  *   PHASE_1_METRONOME  (entered on Tap 1 ARROW_UP)
  *     Records _tap1AtMs = phase1StartAtMs.  Fixed-duration metronome runs
@@ -125,8 +132,8 @@
  *
  * ── Scan Lock (D-043) ────────────────────────────────────────────────────────
  *
- *   SCAN_LOCKED dispatched on TARGET_LOCKED received (entering ARMED).
- *   SCAN_UNLOCKED dispatched on CAST_LANDED and on CAST_BIRDS_NEST.
+ *   SCAN_LOCKED dispatched on TARGET_LOCKED received (entering LURE_SELECT).
+ *   SCAN_UNLOCKED dispatched on CAST_LANDED, CAST_BIRDS_NEST, and ESC from LURE_SELECT.
  *   SCAN_UNLOCKED also dispatched in onUnmount if the pipeline was mid-cast.
  *
  * ── Events Emitted ───────────────────────────────────────────────────────────
@@ -137,10 +144,16 @@
  *   CAST_BIRDS_NEST      { nestDurationMs, phase, atMs }
  *   CAST_LANDED          { poiId, candidateId, finderTier, landing, target,
  *                          splashKind, scatterRadius, mitigationFactor, atMs }
+ *   LURE_OPTIONS         { lures, recommendedLureId, atMs }  (D-072)
+ *   LURE_LOCKED          { lureId, atMs }  (D-072)
+ *   TARGET_RETAINED      { poiId, offset, candidateId, lockedAtMs, finderTier,
+ *                          recastCount, atMs }  (D-073)
  *
  * H-005 note: All _unsubs, _whiffHandle, _metronomeEndHandle, and _metronomeTickHandle
  *             are cancelled in onUnmount.
  * H-014 note: This module does NOT import fishFinder.js or targetSelector.js.
+ * H-020 note: LURE_SELECT sub-state is owned here (castPipeline), NOT targetSelector
+ *             (D-072a). targetSelector remains target-only.
  * D-021 note: This module does NOT import any audio module.
  */
 
@@ -229,7 +242,7 @@ const SPLASH_NORMAL_THRESHOLD = 0.35;
 
 /**
  * Current FSM phase.
- * @type {'IDLE'|'ARMED'|'PHASE_1_METRONOME'|'PHASE_2_ACCURACY'|'PHASE_3_METRONOME'|'PHASE_4_IMPACT'}
+ * @type {'IDLE'|'LURE_SELECT'|'ARMED'|'PHASE_1_METRONOME'|'PHASE_2_ACCURACY'|'PHASE_3_METRONOME'|'PHASE_4_IMPACT'}
  */
 let _phase = 'IDLE';
 
@@ -280,6 +293,21 @@ let _metronomeTickHandles = [];
  * @type {{ next():number, int(min:number,max:number):number } | null}
  */
 let _castRng = null;
+
+/**
+ * Lure options list built for the LURE_SELECT phase (D-072).
+ * @type {Array<{ lureId:string, category:string, tier:number, matchScore:number, sweetWeightOk:boolean }>}
+ */
+let _lureOptions = [];
+
+/** Current cursor index within _lureOptions during LURE_SELECT. */
+let _selectedLureIdx = 0;
+
+/**
+ * How many times the player has re-cast at the current retained target (D-073).
+ * For TTS coalescing only — NOT a math input (D-073 explicit).
+ */
+let _recastCount = 0;
 
 /**
  * Bus unsubscribe functions acquired in onMount.
@@ -492,6 +520,9 @@ function _resetToIdle() {
   _phase4StartAtMs  = null;
   _scatterRadius    = 0;
   _mitigationFactor = 0;
+  _lureOptions      = [];
+  _selectedLureIdx  = 0;
+  // _recastCount is NOT reset here — it is reset on new TARGET_LOCKED (D-073).
 
   _dispatchPhase(null);
 
@@ -648,17 +679,151 @@ function _getPoiCenter() {
 }
 
 // ---------------------------------------------------------------------------
+// D-071 rod auto-select and D-072 lure-options helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-select the lightest-power rod in activeTackle that satisfies the
+ * target's `rodClassRequired` (D-071).  Dispatches CAST_ROD_SELECTED so
+ * stateStore records the choice in state.tournament.cast.activeRodId.
+ *
+ * AUTO-SELECT ONLY — never moves items into or out of activeTackle (H-017a).
+ * No-op if rodClassRequired is absent, not in the 7-step ladder, or no
+ * matching rod is found.
+ *
+ * @param {string|undefined} rodClassRequired  UL|L|ML|M|MH|H|XH
+ * @param {number}           atMs
+ */
+function _autoSelectRod(rodClassRequired, atMs) {
+  if (!rodClassRequired) return;
+
+  const ROD_POWER_ORDER = ['UL', 'L', 'ML', 'M', 'MH', 'H', 'XH'];
+  const minPowerIdx = ROD_POWER_ORDER.indexOf(rodClassRequired);
+  if (minPowerIdx < 0) return;
+
+  const state        = stateStore.getState();
+  const activeTackle = state.tournament?.activeTackle ?? state.hub?.activeTackle;
+  const rods         = activeTackle?.rods ?? [];
+
+  let selectedRodId    = null;
+  let selectedPowerIdx = Infinity;
+
+  for (const entry of rods) {
+    try {
+      const def      = equipment.getRod(entry.id);
+      const powerIdx = ROD_POWER_ORDER.indexOf(def.power);
+      if (powerIdx >= minPowerIdx && powerIdx < selectedPowerIdx) {
+        selectedRodId    = entry.id;
+        selectedPowerIdx = powerIdx;
+      }
+    } catch { /* skip unresolvable rods */ }
+  }
+
+  if (selectedRodId) {
+    stateStore.dispatch({ type: 'CAST_ROD_SELECTED', payload: { rodId: selectedRodId } });
+  }
+}
+
+/**
+ * Build the scored lure options array for the LURE_SELECT phase (D-072).
+ *
+ * Reads activeTackle.lures from stateStore, resolves each lure's category /
+ * tier / weightOz via equipment.getLure, and computes sweetWeightOk against
+ * the first rod in activeTackle.rods.
+ *
+ * matchScore is a placeholder (0.5) until Phase 6 wires the full
+ * M_lure↔species × M_lure↔poi scoring from D-059 / D-072.
+ *
+ * @returns {{ options: Array, recommendedLureId: string|null }}
+ */
+function _buildLureOptions() {
+  const state        = stateStore.getState();
+  const activeTackle = state.tournament?.activeTackle ?? state.hub?.activeTackle;
+  const lures        = activeTackle?.lures ?? [];
+  const rods         = activeTackle?.rods  ?? [];
+
+  let rodDef = null;
+  try {
+    const rodEntry = rods[0];
+    if (rodEntry) rodDef = equipment.getRod(rodEntry.id);
+  } catch { /* sweetWeightOk defaults false */ }
+
+  const options = lures.map(entry => {
+    let category      = 'UNKNOWN';
+    let tier          = 1;
+    let sweetWeightOk = false;
+    try {
+      const lureDef = equipment.getLure(entry.id);
+      category      = lureDef.category;
+      tier          = lureDef.tier;
+      if (rodDef) {
+        const w     = lureDef.weightOz;
+        sweetWeightOk = w >= rodDef.lureWeightRangeOz.min && w <= rodDef.lureWeightRangeOz.max;
+      }
+    } catch { /* unknown lure — defaults above stand */ }
+
+    return {
+      lureId:       entry.id,
+      category,
+      tier,
+      matchScore:   0.5, // placeholder — full scoring wired in Phase 6 (fishBehavior)
+      sweetWeightOk,
+    };
+  });
+
+  // Prefer a sweet-weight lure as the default; fall back to first entry.
+  const sweet             = options.find(o => o.sweetWeightOk);
+  const recommendedLureId = sweet?.lureId ?? options[0]?.lureId ?? null;
+
+  return { options, recommendedLureId };
+}
+
+/**
+ * Enter the LURE_SELECT sub-state (D-072).
+ *
+ * Called from _onTargetLocked (fresh target) and from _onSpacebar IDLE case
+ * (camping re-arm per D-073).  Builds lure options, positions the cursor on
+ * the recommended lure, dispatches CAST_PHASE_CHANGED, and emits LURE_OPTIONS.
+ *
+ * @param {number} atMs
+ */
+function _enterLureSelect(atMs) {
+  const { options, recommendedLureId } = _buildLureOptions();
+  _lureOptions     = options;
+  _selectedLureIdx = Math.max(0, options.findIndex(o => o.lureId === recommendedLureId));
+
+  _phase = 'LURE_SELECT';
+  _dispatchPhase({
+    phase:           'LURE_SELECT',
+    target:          _target,
+    selectedLureIdx: _selectedLureIdx,
+    lureCount:       options.length,
+    atMs,
+  });
+
+  bus.emit('LURE_OPTIONS', {
+    lures:             options,
+    recommendedLureId,
+    atMs,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Input handlers
 // ---------------------------------------------------------------------------
 
 /**
- * TARGET_LOCKED handler — IDLE → ARMED.
+ * TARGET_LOCKED handler — IDLE → LURE_SELECT (D-072).
  *
- * D-011: anchors the cast target in POI-frame coordinates.
- * D-012: samples and holds the wind vector for the entire cast flight.
+ * D-011: anchors the cast target in POI-frame coordinates at this moment.
+ * D-012: samples and holds the wind vector for the cast's lifetime.
  * D-043: sets state.tournament.scanLocked so fishFinder blocks new scans.
+ * D-071: auto-selects the lightest qualifying rod from activeTackle.
+ * D-073: resets recastCount (fresh TARGET_LOCKED replaces any retained target).
  *
- * Starts the arrow whiff timer (awaiting Tap 1 ARROW_UP).
+ * @param {{ poiId:string, offset:{dx:number,dy:number}, candidateId:string,
+ *            finderTier:string, lockedAtMs?:number,
+ *            rodClassRequired?:string }} evt
  */
 function _onTargetLocked(evt) {
   if (_phase !== 'IDLE') {
@@ -682,15 +847,16 @@ function _onTargetLocked(evt) {
     intensityMs: windSample.intensityMs,
   };
 
+  // D-073: fresh TARGET_LOCKED replaces any retained target — reset count.
+  _recastCount = 0;
+
+  // D-071: auto-select lightest qualifying rod (AUTO-SELECT ONLY — no
+  // set-membership mutation on activeTackle per H-017a).
+  _autoSelectRod(evt.rodClassRequired, atMs);
+
   stateStore.dispatch({ type: 'SCAN_LOCKED' });
 
-  _phase = 'ARMED';
-  _dispatchPhase({ phase: 'ARMED', target: _target, atMs });
-
-  // NOTE: _scheduleWhiff() is NOT called here (D-015 v1.14).
-  // The player may sit in ARMED indefinitely — no penalty for taking time
-  // to orient before Tap 1.  The whiff timer starts only when ARROW input
-  // is expected: PHASE_2_ACCURACY and PHASE_4_IMPACT (see _onMetronomeEnd).
+  _enterLureSelect(atMs);
 }
 
 /**
@@ -702,6 +868,21 @@ function _onArrowUp(evt) {
   const atMs = evt.atMs ?? clock.nowMs();
 
   switch (_phase) {
+
+    // ── LURE_SELECT: cursor up (D-072) ──────────────────────────────────────
+    case 'LURE_SELECT': {
+      if (_lureOptions.length > 1) {
+        _selectedLureIdx = (_selectedLureIdx - 1 + _lureOptions.length) % _lureOptions.length;
+        _dispatchPhase({
+          phase:           'LURE_SELECT',
+          target:          _target,
+          selectedLureIdx: _selectedLureIdx,
+          lureCount:       _lureOptions.length,
+          atMs,
+        });
+      }
+      break;
+    }
 
     // ── Tap 1: Start PHASE_1 metronome ─────────────────────────────────────
     case 'ARMED': {
@@ -746,12 +927,28 @@ function _onArrowUp(evt) {
 }
 
 /**
- * ARROW_DOWN tap handler — Tap 5 (Splashdown) only.
+ * ARROW_DOWN tap handler — cursor down in LURE_SELECT (D-072) or
+ * Tap 5 (Splashdown) in PHASE_4_IMPACT.
  *
  * @param {{ atMs?: number }} evt
  */
 function _onArrowDown(evt) {
   const atMs = evt.atMs ?? clock.nowMs();
+
+  // ── LURE_SELECT: cursor down (D-072) ─────────────────────────────────────
+  if (_phase === 'LURE_SELECT') {
+    if (_lureOptions.length > 1) {
+      _selectedLureIdx = (_selectedLureIdx + 1) % _lureOptions.length;
+      _dispatchPhase({
+        phase:           'LURE_SELECT',
+        target:          _target,
+        selectedLureIdx: _selectedLureIdx,
+        lureCount:       _lureOptions.length,
+        atMs,
+      });
+    }
+    return;
+  }
 
   if (_phase !== 'PHASE_4_IMPACT') return;
 
@@ -790,6 +987,23 @@ function _onArrowDown(evt) {
     atMs,
   });
 
+  // D-073 Camping Loop: emit TARGET_RETAINED before resetting if the store
+  // still holds a lastTarget.  _target is still valid at this point.
+  // recastCount is for TTS coalescing only — NOT a math input (D-073).
+  const lastTarget = stateStore.getState().tournament?.lastTarget;
+  if (lastTarget) {
+    _recastCount += 1;
+    bus.emit('TARGET_RETAINED', {
+      poiId:       _target.poiId,
+      offset:      { ..._target.offset },
+      candidateId: _target.candidateId,
+      lockedAtMs:  lastTarget.lockedAtMs,
+      finderTier:  _target.finderTier,
+      recastCount: _recastCount,
+      atMs,
+    });
+  }
+
   _resetToIdle();
 }
 
@@ -806,6 +1020,44 @@ function _onSpacebar(evt) {
   const atMs = evt.atMs ?? clock.nowMs();
 
   switch (_phase) {
+
+    // ── IDLE: camping re-arm on retained target (D-073) ────────────────────
+    case 'IDLE': {
+      const lastTarget = stateStore.getState().tournament?.lastTarget;
+      if (!lastTarget) break;
+
+      // Restore _target from stateStore so _enterLureSelect has data to work with.
+      _target = {
+        poiId:       lastTarget.poiId,
+        offset:      { dx: lastTarget.offset?.dx ?? 0, dy: lastTarget.offset?.dy ?? 0 },
+        candidateId: lastTarget.candidateId,
+        finderTier:  lastTarget.finderTier,
+      };
+
+      // Re-sample wind for the new cast (D-012 — held from this point through flight).
+      const windSample = wind.sample(atMs);
+      _windAtCast = { dx: windSample.dx, dy: windSample.dy, intensityMs: windSample.intensityMs };
+
+      stateStore.dispatch({ type: 'SCAN_LOCKED' });
+      _enterLureSelect(atMs);
+      break;
+    }
+
+    // ── LURE_SELECT: confirm selection → ARMED (D-072) ─────────────────────
+    case 'LURE_SELECT': {
+      const chosen = _lureOptions[_selectedLureIdx];
+      if (!chosen) break;
+
+      const lureId = chosen.lureId;
+      stateStore.dispatch({ type: 'LURE_LOCKED', payload: { lureId } });
+      bus.emit('LURE_LOCKED', { lureId, atMs });
+
+      // LURE_SELECT → ARMED.  No whiff timer yet — player may sit in ARMED
+      // indefinitely before delivering Tap 1 (D-015 v1.14).
+      _phase = 'ARMED';
+      _dispatchPhase({ phase: 'ARMED', target: _target, atMs });
+      break;
+    }
 
     case 'PHASE_1_METRONOME':
       if (_tap2AtMs === null) {
@@ -840,6 +1092,20 @@ function _onSpacebar(evt) {
   }
 }
 
+/**
+ * ESC handler — cancel LURE_SELECT and return to IDLE (D-072).
+ *
+ * Clears _target so targetSelector regains candidate-list focus.
+ * Dispatches SCAN_UNLOCKED so fishFinder is unblocked for a fresh scan.
+ * No Bird's Nest penalty — ESC is a voluntary cancel.
+ *
+ * @param {{ atMs?: number }} _evt
+ */
+function _onEsc(_evt) {
+  if (_phase !== 'LURE_SELECT') return;
+  _resetToIdle();
+}
+
 // ---------------------------------------------------------------------------
 // Mount manifest (H-005)
 // ---------------------------------------------------------------------------
@@ -866,22 +1132,30 @@ modeRouter.registerMountManifest({
     _phase4StartAtMs      = null;
     _scatterRadius        = 0;
     _mitigationFactor     = 0;
+    _lureOptions          = [];
+    _selectedLureIdx      = 0;
+    _recastCount          = 0;
     _whiffHandle          = null;
     _metronomeEndHandle   = null;
     _metronomeTickHandles = [];
 
     _unsubs = [
-      // TARGET_LOCKED from targetSelector — the Tap-1 anchor trigger (D-041).
+      // TARGET_LOCKED from targetSelector — enters LURE_SELECT (D-072).
       bus.on('TARGET_LOCKED',     _onTargetLocked),
 
-      // ARROW_UP: Tap 1 (ARMED → PHASE_1) and Tap 3 (PHASE_2 → PHASE_3).
+      // ARROW_UP: cursor up in LURE_SELECT; Tap 1 (ARMED → PHASE_1);
+      //           Tap 3 (PHASE_2 → PHASE_3).
       bus.on('INPUT_ARROW_UP',    _onArrowUp),
 
-      // ARROW_DOWN: Tap 5 (PHASE_4 → CAST_LANDED).
+      // ARROW_DOWN: cursor down in LURE_SELECT; Tap 5 (PHASE_4 → CAST_LANDED).
       bus.on('INPUT_ARROW_DOWN',  _onArrowDown),
 
-      // SPACEBAR: optional Taps 2 and 4 (wind-mitigation timing).
+      // SPACEBAR: camping re-arm in IDLE (D-073); confirm in LURE_SELECT (D-072);
+      //           optional Taps 2 and 4 (wind-mitigation timing).
       bus.on('INPUT_SPACEBAR',    _onSpacebar),
+
+      // ESC: cancel LURE_SELECT, return to IDLE (D-072).
+      bus.on('INPUT_ESC',         _onEsc),
     ];
   },
 

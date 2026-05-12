@@ -1,0 +1,138 @@
+Thinking: Let me re-read the current state of castPipeline.js carefully, then make the precise surgical edits needed for D-072 (LURE_SELECT phase) and D-073 (Target Retention / Camping Loop).
+D-072: Insert a LURE_SELECT phase between TARGET_LOCKED and ARMED:
+- On TARGET_LOCKED received, instead of going straight to ARMED, go to LURE_SELECT
+- castPipeline emits LURE_OPTIONS { lures, recommendedLureId, atMs }
+- Player navigates with ARROW_UP/DOWN, confirms with SPACEBAR, cancels with ESC
+- On confirm: dispatch LURE_LOCKED, transition to ARMED
+- On cancel (ESC): return to IDLE and clear the target
+- The default selection should be recommendedLureId, and the lures array comes from activeTackle.lures (frozen per H-017a), with each lure including lureId, category, tier, matchScore, and sweetWeightOk fields
+- Player navigates with arrow keys, confirms with SPACEBAR to emit LURE_LOCKED and transition to ARMED, or cancels with ESC to go back to the target list
+- castPipeline.js owns the LURE_SELECT sub-state and handles the flow: it consumes TARGET_LOCKED, computes lure options via equipment.listActiveLures(), emits LURE_OPTIONS, then waits for input until LURE_LOCKED fires
+- The full state sequence runs: IDLE → TARGET_LOCKED → LURE_SELECT → LURE_LOCKED → ARMED → PHASE_1_METRONOME → PHASE_2_ACCURACY → PHASE_3_METRONOME → PHASE_4_...
+Now I'm looking at target retention across casts. The system stores the last target in state.tournament.lastTarget, which persists through CAST_LANDED. When transitioning back to IDLE, if a target was retained, castPipeline emits TARGET_RETAINED with the target details and recast count. Pressing SPACEBAR in IDLE while a target is retained re-enters LURE_SELECT on that same target—though the lure choice itself isn't remembered, only the target. The retained target gets cleared when a new target locks, the fish finder starts scanning, the player travels to a POI, or the tournament ends, and recastCount is tracked purely for TTS coalescing. , NOT a math input
+So D-073 means:
+1. Track recastCount module-level
+2. After CAST_LANDED, dispatch CAST_PHASE_CHANGED(null) and SCAN_UNLOCKED, reset cast state, go to IDLE
+3. If lastTarget !== null, emit TARGET_RETAINED with recastCount
+4. In IDLE, SPACEBAR with lastTarget != null re-enters LURE_SELECT (does NOT dispatch TARGET_LOCKED again)
+5. On TARGET_CLEARED or new TARGET_LOCKED, clear recastCount
+The phase flow is shifting from the current IDLE → ARMED → PHASE_1_METRONOME sequence to a new one that inserts LURE_SELECT between IDLE and ARMED. So now it's IDLE → LURE_SELECT (on TARGET_LOCKED) → ARMED (on LURE_LOCKED) → through all the phases → CAST_LANDED, then back to IDLE with a potential TARGET_RETAINED emission. SPACEBAR in IDLE with an existing target skips the TARGET_LOCKED dispatch and goes straight back into LURE_SELECT. I also need to update the FSM type annotation to include LURE_SELECT and remove PHASE_2_ACCURACY since that's being consolidated, and I should keep in mind that whiff scheduling never happens in LURE_SELECT, just like it didn't in the old ARMED entry point.
+On TARGET_LOCKED, the castPipeline auto-selects the lightest rod that meets the target's rodClassRequired—targetSelector has already filtered out unreachable targets, so by the time the event arrives, the rod selection is guaranteed to work. I need to focus on D-072 and D-073 rather than getting sidetracked by D-071. The rod auto-selection logic does belong in _onTargetLocked though, so I'll handle that alongside the main changes. Let me map out the code modifications needed: updating the phase type annotation to include 'LURE_SELECT', then adding the necessary module logic and event handlers. Now I need to wire up the input handlers for navigating and confirming lure selection—arrow keys to move the cursor up and down through available lures, spacebar to confirm the pick, and escape to bail out back to idle state.
+The tricky part is managing the scan lock state: when the player targets something, we lock the scan so they can't re-scan while picking a lure, then if they cancel out of lure selection, we need to unlock the scan again so the fish finder becomes available for another attempt.
+Now I'm working through the impact phase logic - after the cast lands, instead of fully resetting, I should do a partial reset that preserves the target, then check if there's a retained target to increment the recast counter and emit the appropriate event while unlocking the scan. I'm also checking the bird's nest behavior to see when the target should be cleared.
+Looking at the spec more carefully, I see there's a distinction between `_target` (the module-level variable used during casting) and `state.tournament.lastTarget` (the persistence layer in the store). The bird's nest doesn't trigger a CAST_LANDED event, so it wouldn't emit TARGET_RETAINED, but it also shouldn't clear the lastTarget since that's only cleared by specific conditions listed in the spec. separate things
+On TARGET_LOCKED:
+- _target gets set to the new target
+- stateStore gets TARGET_LOCKED dispatched → sets state.tournament.lastTarget
+After CAST_LANDED:
+- _target stays set (we keep it for potential re-arm)
+- state.tournament.lastTarget remains set (it's not cleared by CAST_LANDED)
+- We emit TARGET_RETAINED if lastTarget is set
+- recastCount++
+After Bird's Nest:
+- _target gets cleared (via _resetToIdle)
+- state.tournament.lastTarget remains... hmm, should it be cleared on bird's nest? The brief doesn't list it as a clear condition. So after a bird's nest, the player could still press SPACEBAR in IDLE to re-arm on the last target. That seems intentional - bird's nest is just a time penalty, you still remember where you were casting.
+When the player presses SPACEBAR in IDLE after a bird's nest, the re-arm reads lastTarget from the store and uses it to set _target and enter LURE_SELECT. For the ESC handler, I need to figure out what happens when the player cancels during LURE_SELECT—they go back to IDLE and the targetSelector becomes active again since SCAN_UNLOCKED was dispatched. I need to implement a way to get active lures since the current equipment API doesn't have `listActiveLures()`. I'll create a stub that pulls from `activeTackle.lures` and builds basic lure option objects with scoring logic that can be refined later, following what D-072 specifies about using only the frozen set of active lures. Now I need to make surgical edits to the existing file—updating the JSDoc comments to document the new LURE_SELECT phase and the D-072/D-073 behavior, then modifying the phase type annotation, module state, and the arrow key handlers to support lure cursor navigation.
+I should also add the spacebar handler for camping confirmation and create an ESC handler, update the mount and reset functions to manage the new state, and implement the helper functions for entering lure selection, building the lure options, and auto-selecting the rod based on the target's requirements.
+Let me verify that D-071 rod auto-select should be included now since it's directly tied to the flow—the rodClassRequired comes from TARGET_LOCKED and feeds into LURE_SELECT, so it makes sense to implement it alongside these changes.
+Now I'll write out the actual file edits using the multi-replace approach. Now I'm mapping out the exact sections I need to modify in the code—the phase type annotation, the new state variables for lure selection, and then updating each handler function to support the new LURE_SELECT phase with its own arrow key and spacebar logic.
+For the _onArrowDown function specifically with the new Tap 5 behavior, I need to handle the post-cast state differently: instead of calling the full reset, I'll do a targeted cleanup that preserves the target for the camping check, then transition to IDLE and check if we should increment the recast counter and emit TARGET_RETAINED based on what's in the tournament state.
+The cleanest approach is to emit TARGET_RETAINED before calling _resetToIdle, since that function already handles clearing everything and dispatching the necessary state changes—so the sequence becomes: compute landing and apply spook, emit TARGET_RETAINED if applicable, then call _resetToIdle to finish the cleanup and dispatch CAST_PHASE_CHANGED and SCAN_UNLOCKED.
+For the SPACEBAR re-arm logic in IDLE state, I'm reconstructing the target from the retained lastTarget data...
+Continuing with the re-arm setup...
+Now I'm questioning the timing of when wind should be sampled—D-012 specifies it gets locked at Tap 1 (the start of the backswing in PHASE_1_METRONOME), but the current implementation samples it in _onTargetLocked, which happens before ARMED. I need to trace through the spec more carefully to figure out if wind should be captured when entering LURE_SELECT during a re-arm or later when ARMED is entered after the lure is confirmed. I see there's some ambiguity around when exactly wind gets sampled—the docs mention Tap 1, but the existing code does it at TARGET_LOCKED, which is earlier in the flow. I'll stick with that established pattern for consistency in the camping re-arm logic. For the ESC cancellation, I need to wire up the input event—looking at the naming convention, it should be INPUT_ESC to match the existing INPUT_ARROW_UP and INPUT_SPACEBAR events.
+Now I'm ready to write out the actual edits. I need to find the exact text to match and insert the new functions in the right spot—between the landing offset section and the input handlers. Let me start building out _buildLureOptions, which pulls the active tackle data and constructs the lure list...
+Building the helper functions... Finishing the weight range validation, then building out the options array with each lure's category, tier, and whether it matches the rod's weight constraints. I'm selecting the best lure recommendation by prioritizing ones that fit the rod's sweet spot, falling back to the first option if none match.
+Now I'm implementing the rod auto-selection logic that picks the lightest-power rod from the available tackle that meets the target's power class requirement, using a power hierarchy from ultra-light through extra-heavy. If a rod was selected, I dispatch the action to update the store with that rod ID. Then I'm moving into the lure selection phase, which computes available lure options from the active tackle, sets a default cursor position to the recommended lure, and dispatches the phase change along with emitting lure options for audio consumers. Setting up the onMount lifecycle handler to reset all the state variables back to their initial values, clearing out any previous mode's data like tap timings, phase markers, and event subscriptions. I need to add state variables for tracking the lure selection and recast attempts, wire up the escape key handler to the subscription list, and hook into the fish finder scan event to reset the recast counter when a new scan begins—though I'm realizing the stateStore already clears the target on scan, so I mainly need to keep the recast count tidy for consistency.
+Now I'm mapping out all the code changes needed: updating the phase sequence in the header comment, adjusting the phase type annotation, adding the new module-level variables, resetting them in the idle function, and making significant updates to the target locked handler.
+Then I need to add the helper functions for auto-selecting the rod and building lure options, update all the input handlers to support the new LURE_SELECT phase with cursor navigation and confirmation, add an escape handler, and wire everything up in the mount function with the new subscriptions and resets.
+Let me verify there are no conflicts between these edits—they're all targeting different sections, so I should be good to proceed.
+Now I'm going through each section carefully to make sure the oldString patterns match exactly before making the replacements. Now I'm defining the reset function that clears the FSM state and cancels any active timers or animations, resetting all phase-related variables back to their initial values and dispatching the phase change.
+I need to add initialization for the lure options array and selected lure index within this reset function. Then I'm looking at the target locked handler that transitions from IDLE to ARMED state, and I realize the arrow key handling needs to distinguish between ARMED mode (where up arrow triggers Tap 1) and a new LURE_SELECT mode (where arrow keys navigate the lure cursor). Continuing with the _onArrowDown implementation, I'm computing the mitigation factor after the metronome phases complete, then calculating the frame radius, landing position, and splash type. I'm applying the spook effect to the landing tile through the castSpookModel...
+Still writing event handler... Now I'm computing the mitigation factor based on spacebar inputs from earlier phases, then calculating where the cast lands and what kind of splash it creates. I apply the splash effect to the landing tile through the spook model, and emit a CAST_LANDED event with all the impact details including the landing coordinates, splash type, and mitigation factor.
+After that, I check if there's a retained target in the store—if so, I increment the recast counter and emit a TARGET_RETAINED event so listeners can offer a quick re-cast option before resetting the target state.
+Now I'm adding the IDLE case to the spacebar handler, where if a lastTarget exists, I reconstruct the _target object with the stored position and candidate info.
+Continuing with the spacebar logic... Still writing event handlers... Writing the TARGET_LOCKED handler... Now I'm figuring out the exact strings to replace in the file. The header comment needs updates to reflect the new state flow—specifically changing when ARMED gets entered and adding the LURE_SELECT phase description. I could update everything at once, but I think I should focus on the functional changes first and keep the documentation changes surgical to avoid breaking anything.
+Let me map out what needs to change in the header: the phase sequence needs LURE_SELECT inserted after IDLE with its entry condition, ARMED's entry condition changes from TARGET_LOCKED to LURE_LOCKED, and I need to add the new events being emitted. I'll keep this minimal though and just update the phase list to avoid a massive diff. I'm refining the state transitions—LURE_SELECT now handles lure cycling with arrow keys and spacebar confirmation, then moves to ARMED once a lure is locked, where the player waits for the backswing input without a whiff timer. I need to update the Events Emitted section to reflect the new LURE_OPTIONS event and adjust CAST_PHASE_CHANGED accordingly. Defining the event schema... I'm clarifying the ownership model—the LURE_SELECT sub-state belongs to castPipeline, not targetSelector, which stays focused on target-only logic. Then I'm updating the _phase type annotation to include the new 'LURE_SELECT' state in the phase cycle. I'm adding three new module-level variables to track lure selection state: an array to hold the built lure options with their metadata, an index for the currently selected lure, and a counter for how many times the player has re-cast at the same target. I need to finish initializing the remaining variables and then handle the target locked logic. I'm adding the lure options array and selected index to the reset, then rewriting the target locked handler which anchors the cast target, captures the wind vector, and locks the scanner state before starting the whiff timer. Writing the handler logic... Writing the target handler... I'm inserting the new helper functions right after `_getPoiCenter()` and before the input handlers section. Then I'm adding the LURE_SELECT case to the `_onArrowUp` switch statement to handle cycling through lure options with the D-pad.
+Now I'm adding the corresponding down-arrow handler...
+When the down arrow is pressed during the impact phase, I need to cancel any lingering whiff sound, stop the sweep audio immediately, then compute the final mitigation factor based on all the metronome taps and spacebar inputs that happened during phases 1 and 3. After that I'm calculating the frame radius, landing position, and splash type to apply the spook effect on the landing tile. Writing the arrow key handler... Writing the cast landing logic... Still writing the spacebar handler... I'm finishing the lure selection logic by extracting the chosen lure ID, dispatching the lock event, and transitioning the phase to ARMED so the player can deliver their first tap whenever they're ready.
+Now I need to add the ESC handler that cancels out of lure selection and returns to idle, clearing the target and unblocking the fish finder for a fresh scan.
+In the mount manifest, I'm resetting all the phase tracking variables, tap timing records, and effect handles back to their initial states when entering this mode.
+Now I'm setting up the event subscriptions that'll handle the core input flow — TARGET_LOCKED triggers the anchor, arrow keys drive the tap sequence through different phases, and spacebar handles wind-mitigation timing windows.
+Initializing state variables...
+Now I'm setting up event subscriptions for the input system—mapping various game events like target locks, arrow inputs, and spacebar presses to their corresponding handler functions.
+I need to find where to insert the new helper functions, which should go after `_getPoiCenter()` and before the input handlers section. Now I'm adding helper functions for the rod auto-selection feature, which automatically picks the lightest-power rod from the active tackle that meets the target's power requirements, then dispatches an action to record that choice in the state store. Finishing the rod selection logic by checking if the current rod meets the minimum power requirement and has a lower power index than what's already selected, then dispatching the selected rod to the state store. Now I'm moving into building the lure options array for the next phase, which involves reading the available lures from tackle, fetching their properties, and calculating which ones are suitable based on the equipped rod. Building lure options...
+I'm completing the options array by adding tier and a placeholder match score, then finding the best lure recommendation by prioritizing one that fits the rod's weight range, falling back to the first available option if none match. Now I'm moving into the lure selection sub-state handler that gets triggered when a target locks or the player re-arms while camping. Now I'm preparing the multi_replace call with 11 edits, being careful to match the exact strings from the file. Let me verify the precise text for a few key sections by reviewing what I already read, particularly around the `_onTargetLocked` function starting around line 666 and the switch statement in `_onArrowUp`. I'm verifying the exact formatting of the switch statement and the onMount handler — there's a blank line after `switch (_phase) {` before the first case, and the onMount function resets the phase to 'IDLE' and initializes state variables while intentionally preserving the RNG across tournament casts for continuity.
+Now I'm setting up the event subscriptions that wire the input handlers to the bus — TARGET_LOCKED triggers the anchor, arrow keys handle the phase transitions at specific tap points, and spacebar provides optional wind-mitigation timing windows. Finishing up the reset function that clears all the FSM state variables and dispatches the phase change, then unlocks the scan if we were actively casting.
+Now I'm reviewing the documentation sections to understand the phase transitions and event emissions — specifically how the ARMED phase holds the wind vector and blocks new scans, then transitions to PHASE_1_METRONOME on the first arrow tap, and what events get fired throughout the cast lifecycle. I'm going to batch these edits into logical groups to avoid conflicts, but I need to be careful about the exact whitespace in those header comments—the dashes and spacing have to match precisely. Looking at the ARMED section more closely, I notice the header description doesn't quite align with what the actual code does in _onTargetLocked, so I'll correct that inconsistency while I'm making these updates. I'm noticing a discrepancy in the header comment — it says the arrow whiff timer is running in ARMED, but the actual code doesn't schedule that timer until later phases. I need to fix the header to match the implementation, removing the reference to the whiff timer from ARMED since it only starts when arrow input is actually expected. I've got a solid plan mapped out—now I'm just going to execute all the changes in one multi_replace call to keep it efficient. Let me write out the complete set of replacements covering the header updates, state variables, reset logic, event handlers, and the new helper functions.
+Writing the replacements...
+Before writing anything, let me confirm the current state of the file end-to-end so I know every exact string I need to match.
+Read castPipeline.js, lines 17 to 50
+Read castPipeline.js, lines 51 to 175
+Thinking: Good, I have all the text I need. Now let me plan the exact edits and write them.
+Let me now think carefully about the "D-073" requirements again:
+D-073 says:
+- `state.tournament.lastTarget` is introduced (done in stateStore.js)
+- Survives CAST_LANDED
+- Cleared on: (a) new TARGET_LOCKED, (b) FISH_FINDER_SCAN start, (c) POI travel, (d) tournament end/weigh-in
+- On CAST_LANDED → IDLE transition, if lastTarget !== null, castPipeline emits TARGET_RETAINED { poiId, offset, candidateId, lockedAtMs, finderTier, recastCount }
+- Pressing SPACEBAR in IDLE while lastTarget !== null re-arms the cast on that retained target, cycling back through LURE_SELECT without retaining lure choice
+- recastCount tracks attempts for TTS coalescing purposes only, not for any mathematical calculations
+D-072 establishes the LURE_SELECT phase between TARGET_LOCKED and ARMED, where castPipeline emits LURE_OPTIONS, the player selects via arrow keys and confirms with SPACEBAR, and ESC cancels the selection.
+Now I'm ready to make the changes.
+Good. Now I have all the exact text I need. Executing all edits at once:
+Replacing 194 lines with 468 lines in castPipeline.js
+```
+```
+```
+```
+Checked castPipeline.js, no problems found
+All 11 edits applied cleanly. Here's what was changed and why:
+D-072 (LURE_SELECT phase):
+`IDLE → LURE_SELECT` on `TARGET_LOCKED` (previously `IDLE → ARMED`)
+_onTargetLocked (c:\nbs\afish\src\casting\castPipeline.js:828)
+now calls
+_autoSelectRod (c:\nbs\afish\src\casting\castPipeline.js:697)
+(D-071) then
+_enterLureSelect (c:\nbs\afish\src\casting\castPipeline.js:790)
+instead of entering ARMED directly
+_enterLureSelect() (c:\nbs\afish\src\casting\castPipeline.js:790)
+— builds lure options via
+_buildLureOptions() (c:\nbs\afish\src\casting\castPipeline.js:739)
+, sets cursor to recommended lure, dispatches CAST_PHASE_CHANGED, emits LURE_OPTIONS
+_buildLureOptions() (c:\nbs\afish\src\casting\castPipeline.js:739)
+— reads frozen
+activeTackle.lures (c:\nbs\afish\src\casting\castPipeline.js:742)
+, resolves category/tier/sweetWeightOk;
+matchScore (c:\nbs\afish\src\casting\castPipeline.js:769)
+is 0.5 placeholder until Phase 6 fish-behavior scoring
+_autoSelectRod() (c:\nbs\afish\src\casting\castPipeline.js:697)
+— walks the 7-step power ladder, dispatches CAST_ROD_SELECTED with lightest qualifying rod; AUTO-SELECT ONLY, H-017a preserved
+`ARROW_UP` / `ARROW_DOWN` in LURE_SELECT move the cursor (wrapping)
+`SPACEBAR` in LURE_SELECT confirms → dispatches `LURE_LOCKED`, emits `LURE_LOCKED`, transitions to ARMED
+`INPUT_ESC` →
+_onEsc() (c:\nbs\afish\src\casting\castPipeline.js:1104)
+— cancels LURE_SELECT, calls
+_resetToIdle() (c:\nbs\afish\src\casting\castPipeline.js:506)
+(dispatches SCAN_UNLOCKED)
+D-073 (Target Retention / Camping Loop):
+`SPACEBAR` in IDLE checks
+state.tournament.lastTarget (c:\nbs\afish\src\casting\castPipeline.js:993)
+; if set, restores
+_target (c:\nbs\afish\src\casting\castPipeline.js:253)
+, re-samples wind, locks scan, enters LURE_SELECT (lure choice not retained, D-073)
+After `CAST_LANDED` in
+_onArrowDown (c:\nbs\afish\src\casting\castPipeline.js:935)
+: reads
+state.tournament.lastTarget (c:\nbs\afish\src\casting\castPipeline.js:993)
+before
+_resetToIdle() (c:\nbs\afish\src\casting\castPipeline.js:506)
+; if set, increments
+_recastCount (c:\nbs\afish\src\casting\castPipeline.js:310)
+and emits
+TARGET_RETAINED { ..., recastCount } (c:\nbs\afish\src\casting\castPipeline.js:1002)
+—
+recastCount (c:\nbs\afish\src\casting\castPipeline.js:1002)
+is TTS-only, not a math input
+_recastCount (c:\nbs\afish\src\casting\castPipeline.js:310)
+resets to 0 on fresh TARGET_LOCKED; persists across camping recasts
