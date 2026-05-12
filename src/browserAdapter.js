@@ -116,6 +116,14 @@ const _KEY_MAP = new Map([
 let _engineReady = false;
 
 window.addEventListener('keydown', (event) => {
+  // Dev shortcut: F1 toggles instant sonar regardless of engine-ready state.
+  // preventDefault is called first so the browser help menu never opens.
+  if (event.code === 'F1') {
+    event.preventDefault();
+    if (_engineReady) bus.emit('INPUT_DEV_F1', {});
+    return;
+  }
+
   if (!_engineReady) return;
 
   const inputType = _KEY_MAP.get(event.code);

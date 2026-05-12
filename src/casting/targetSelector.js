@@ -281,6 +281,10 @@ function _onSpacebar(evt) {
   // are not intercepted by the (now-empty) selector handlers.
   _closeMenu('CONFIRMED');
 
+  // Announce the locked target so the screen reader confirms the selection
+  // before the cast sequence begins (D-042 accessibility).
+  bus.emit('UI_ANNOUNCE', { text: `Target locked: ${candidate.label}` });
+
   // D-041, D-011: emit TARGET_LOCKED — the new Tap-1 anchoring trigger.
   // castPipeline samples the wind vector at this moment (D-012).
   bus.emit('TARGET_LOCKED', {

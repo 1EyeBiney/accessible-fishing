@@ -129,6 +129,24 @@ const MAX_PRESSURE = 5;
 /** Clock handle for the pending scan, or null if idle. */
 let _scanHandle = null;
 
+/**
+ * Dev shortcut: when true, scan duration is overridden to 100 ms so results
+ * arrive near-instantly.  Toggled by INPUT_DEV_F1 (F1 key via browserAdapter).
+ * Not accessible in production play — purely a development aid.
+ * @type {boolean}
+ */
+let _devInstantSonar = false;
+
+// Register the dev toggle unconditionally (harmless in production; the key
+// is only emitted when the browser adapter intercepts F1).
+bus.on('INPUT_DEV_F1', () => {
+  _devInstantSonar = !_devInstantSonar;
+  bus.emit('UI_ANNOUNCE', {
+    text: `Dev mode: Instant Sonar ${_devInstantSonar ? 'ON' : 'OFF'}`,
+  });
+  console.log(`[fishFinder] _devInstantSonar = ${_devInstantSonar}`);
+});
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -170,20 +188,23 @@ export function scan() {
   const config = TIER_CONFIG[tier];
   const atMs   = clock.nowMs();
 
+  // Dev shortcut: collapse scan time to 100 ms for rapid iteration.
+  const scanDurationMs = _devInstantSonar ? 100 : config.scanDurationMs;
+
   // Schedule the scan completion
-  _scanHandle = clock.schedule(config.scanDurationMs, () => {
+  _scanHandle = clock.schedule(scanDurationMs, () => {
     _scanHandle = null;
     _completeScan(poiId, tier, config);
   });
 
   bus.emit('FISH_FINDER_SCANNING', {
     tier,
-    scanDurationMs: config.scanDurationMs,
+    scanDurationMs,
     poiId,
     atMs,
   });
 
-  return { blocked: false, tier, scanDurationMs: config.scanDurationMs };
+  return { blocked: false, tier, scanDurationMs };
 }
 
 /**

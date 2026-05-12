@@ -1,0 +1,100 @@
+Searched codebase for "SYSTEM OVERRIDE / TARGETING UX & DEV SHORTCUTS PATCH
+The user has successfully locked targets, but we have identified three UX/logic flaws that need immediate patching.
+Your Task: Patch the Targeting & Casting Flow
+Implement the following 3 fixes while strictly adhering to our headless architecture:
+**`src/casting/castPipeline.js` (The ARMED Whiff Fix):**
+- The 3-second `_scheduleWhiff()` is currently triggering in the `ARMED` state, punishing players before they even start casting.
+- Remove `_scheduleWhiff()` from the `_onTargetLocked()` handler. The player must be allowed to sit in the `ARMED` state indefinitely. 
+- Ensure `_scheduleWhiff()` ONLY fires when entering `PHASE_2_ACCURACY` and `PHASE_4_IMPACT`.
+**`src/casting/targetSelector.js` (The TTS Target Fix):**
+- When the user presses `Spacebar` and `TARGET_LOCKED` is emitted, the UI is accidentally reading the `poiId` ("Dock").
+- Update the `INPUT_SPACEBAR` handler in `targetSelector.js`. Right before it emits `TARGET_LOCKED`, have it emit a `UI_ANNOUNCE` event explicitly stating: `Target locked: ${candidate.label}`.
+**`src/equipment/fishFinder.js` & `src/browserAdapter.js` (Dev Shortcut):**
+- We need an `F1` toggle for instant fish finding.
+- In `src/browserAdapter.js` (or the equivalent DOM input listener), ensure the `F1` key (`e.code === 'F1'`) calls `e.preventDefault()` and emits `INPUT_DEV_F1` to the bus.
+- In `src/equipment/fishFinder.js`, add a local boolean `let _devInstantSonar = false;`.
+- Add a bus listener for `INPUT_DEV_F1` that toggles this boolean and emits a `UI_ANNOUNCE` confirming "Dev mode: Instant Sonar ON" (or OFF).
+- In `scan()`, if `_devInstantSonar` is true, override `config.scanDurationMs` to `100` (ms) instead of using the tier default.
+Provide the fully updated code for castPipeline.js, targetSelector.js, fishFinder.js, and browserAdapter.js.", 17 results. Files: c:\nbs\afish\.changelog.md, c:\nbs\afish\.output51_ phase 11 continues with tournament stuff.txt, c:\nbs\afish\.output52 fixes for not loaded modules.txt, c:\nbs\afish\.output54O_Opus for fix and eval of new casting.txt, c:\nbs\afish\.output54O_Opus for fix and eval of new casting.txt, c:\nbs\afish\.output55O_Opus fixes project_brief.txt, c:\nbs\afish\.output58_volume increase target announcements in sonar.txt, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\ui\tournamentActive.js
+Thinking: Let me read the relevant files to understand the current state before making changes.
+Let me read all four files first.
+Read castPipeline.js, lines 1 to 80
+Read browserAdapter.js, lines 1 to 80
+Read castPipeline.js, lines 81 to 200
+Read browserAdapter.js, lines 81 to 220
+Read castPipeline.js, lines 201 to 380
+Read browserAdapter.js, lines 221 to 299
+Read castPipeline.js, lines 381 to 550
+Read castPipeline.js, lines 551 to 720
+Now I have all the context I need. Let me read just the
+_onTargetLocked (c:\nbs\afish\src\casting\castPipeline.js:658)
+and
+fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+scan function areas:
+Searched for regex _devInstantSonar|INPUT_DEV_F1|scanDurationMs|let _devInstant (**/src/equipment/fishFinder.js), 14 results. Files: c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js
+Searched for regex scanDurationMs|config\.|SCAN_DURATION|tierConfig (**/src/equipment/fishFinder.js), 19 results. Files: c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\equipment\fishFinder.js
+Read fishFinder.js, lines 105 to 200
+Read fishFinder.js, lines 1 to 110
+I have all I need. Now I'll implement all four changes at once:
+Created 4 todos. 4 items: Remove _scheduleWhiff from ARMED in castPipeline (in-progress); Add TARGET_LOCKED UI_ANNOUNCE in targetSelector (not-started); Add F1 key to browserAdapter (not-started); Add dev instant sonar toggle to fishFinder (not-started)
+Replacing 38 lines with 53 lines in castPipeline.js, targetSelector.js, browserAdapter.js
+```
+```
+```
+```
+```
+```
+```
+```
+Now the fishFinder dev toggle — need to add module-level state and the bus listener, plus the override in
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:147)
+:
+Replacing 24 lines with 45 lines in fishFinder.js
+```
+```
+```
+```
+Checked castPipeline.js, targetSelector.js, browserAdapter.js, fishFinder.js, no problems found
+All four files clean. Here's a precise account of every change:
+src/casting/castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+— ARMED Whiff Fix
+_onTargetLocked() (c:\nbs\afish\src\casting\castPipeline.js:658)
+: removed the
+_scheduleWhiff() (c:\nbs\afish\src\casting\castPipeline.js:305)
+call. The player can now sit in ARMED indefinitely. Whiff timers are already only armed inside
+_onMetronomeEnd() (c:\nbs\afish\src\casting\castPipeline.js:407)
+when transitioning to PHASE_2_ACCURACY and PHASE_4_IMPACT — those were already correct and are untouched.
+src/casting/targetSelector.js (/c:/nbs/afish/src/casting/targetSelector.js)
+— TARGET_LOCKED TTS Fix
+_onSpacebar() (c:\nbs\afish\src\casting\castPipeline.js:795)
+: inserted
+bus.emit('UI_ANNOUNCE', { text: \ (c:\nbs\afish\src\audio\audioEngine.js:56)
+Target locked: ${candidate.label}` })` between
+_closeMenu('CONFIRMED') (c:\nbs\afish\src\casting\targetSelector.js:192)
+and
+bus.emit('TARGET_LOCKED', ...) (c:\nbs\afish\src\audio\audioEngine.js:56)
+. The SR now announces e.g. "Target locked: Dock, 2.5m, gravel, ambush point." before the cast sequence begins.
+src/browserAdapter.js (/c:/nbs/afish/src/browserAdapter.js)
+— F1 Dev Shortcut
+keydown listener: F1 is intercepted before the
+_engineReady (c:\nbs\afish\src\browserAdapter.js:116)
+guard so
+preventDefault() (c:\nbs\afish\src\browserAdapter.js:122)
+always fires (stops the browser help popup). If the engine is ready,
+bus.emit('INPUT_DEV_F1', {}) (c:\nbs\afish\src\audio\audioEngine.js:56)
+is emitted and we return early — F1 is never forwarded to
+_KEY_MAP (c:\nbs\afish\src\browserAdapter.js:81)
+. The keyup listener is not modified (F1 has no mapped keyup action).
+src/equipment/fishFinder.js (/c:/nbs/afish/src/equipment/fishFinder.js)
+— Dev Instant Sonar
+`let _devInstantSonar = false` added to module state.
+bus.on('INPUT_DEV_F1', ...) (c:\nbs\afish\src\audio\audioEngine.js:56)
+registered at module-load scope (same pattern as REQUEST_SCAN): toggles the boolean and emits UI_ANNOUNCE +
+console.log (c:\nbs\afish\src\audio\audioEngine.js:163)
+.
+scan() (c:\nbs\afish\src\equipment\fishFinder.js:165)
+: computes
+const scanDurationMs = _devInstantSonar ? 100 : config.scanDurationMs (c:\nbs\afish\src\audio\audioEngine.js:1287)
+before scheduling. Both
+clock.schedule() (c:\nbs\afish\src\casting\castPipeline.js:148)
+and the FISH_FINDER_SCANNING emit and return value now use this local variable, so the audio engine's scan-ping loop also receives the correct (100 ms) duration and auto-terminates on time.

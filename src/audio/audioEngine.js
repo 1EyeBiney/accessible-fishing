@@ -1263,6 +1263,62 @@ function _registerBusListeners() {
   }));
 
   // ── Cast Pipeline ─────────────────────────────────────────────────────────
+  // AUDIO_METRONOME_TICK — short sharp tick on each beat of PHASE_1 / PHASE_3.
+  // 1 000 Hz triangle, 50 ms, exponential decay: gives a crisp click without
+  // the harshness of a square wave.  Routed directly to masterGain.
+  _unsubs.push(bus.on('AUDIO_METRONOME_TICK', (evt) => {
+    if (!_IS_BROWSER || !_actx) {
+      _logAudio('cast', 'metronome_tick', { phase: evt?.phase, beat: evt?.beatIndex });
+      return;
+    }
+    const now  = _actx.currentTime;
+    const osc  = _actx.createOscillator();
+    const gain = _actx.createGain();
+    osc.connect(gain);
+    gain.connect(_masterGain);
+    osc.type = 'triangle';
+    osc.frequency.value = 1_000;
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    osc.start(now);
+    osc.stop(now + 0.055);
+  }));
+
+  // AUDIO_PITCH_SWEEP — rising (UP) or falling (DOWN) sine sweep over
+  // payload.durationMs.  Covers the full PHASE_2 / PHASE_4 whiff window so
+  // the player can judge the right moment to tap.
+  //   UP   (Phase 2): 200 Hz → 800 Hz — player taps ARROW_UP before the sweep peaks.
+  //   DOWN (Phase 4): 800 Hz → 200 Hz — player taps ARROW_DOWN before it bottoms out.
+  // Gain ramps in over 30 ms and out over the final 80 ms to avoid clicks.
+  _unsubs.push(bus.on('AUDIO_PITCH_SWEEP', (evt) => {
+    const direction  = evt?.direction ?? 'UP';
+    const durationMs = Math.max(100, evt?.durationMs ?? 3_000);
+    if (!_IS_BROWSER || !_actx) {
+      _logAudio('cast', 'pitch_sweep', { direction, durationMs, phase: evt?.phase });
+      return;
+    }
+    const durationSec = durationMs / 1_000;
+    const now  = _actx.currentTime;
+    const osc  = _actx.createOscillator();
+    const gain = _actx.createGain();
+    osc.connect(gain);
+    gain.connect(_masterGain);
+    osc.type = 'sine';
+    const startHz = direction === 'UP' ? 200 : 800;
+    const endHz   = direction === 'UP' ? 800 : 200;
+    osc.frequency.setValueAtTime(startHz, now);
+    osc.frequency.linearRampToValueAtTime(endHz, now + durationSec);
+    // Gain envelope: 30 ms ramp-in, hold, 80 ms ramp-out at the end.
+    const fadeIn  = Math.min(0.03, durationSec * 0.1);
+    const fadeOut = Math.min(0.08, durationSec * 0.1);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.20, now + fadeIn);
+    gain.gain.setValueAtTime(0.20, now + durationSec - fadeOut);
+    gain.gain.linearRampToValueAtTime(0, now + durationSec);
+    osc.start(now);
+    osc.stop(now + durationSec + 0.01);
+  }));
+
   _unsubs.push(bus.on('CAST_BIRDS_NEST', () => {
     if (!_IS_BROWSER || !_actx) { _logAudio('ui', 'error', { event: 'CAST_BIRDS_NEST' }); return; }
     _playUI_error();

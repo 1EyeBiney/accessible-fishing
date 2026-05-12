@@ -682,7 +682,10 @@ function _onTargetLocked(evt) {
   _phase = 'ARMED';
   _dispatchPhase({ phase: 'ARMED', target: _target, atMs });
 
-  _scheduleWhiff();
+  // NOTE: _scheduleWhiff() is NOT called here (D-015 v1.14).
+  // The player may sit in ARMED indefinitely — no penalty for taking time
+  // to orient before Tap 1.  The whiff timer starts only when ARROW input
+  // is expected: PHASE_2_ACCURACY and PHASE_4_IMPACT (see _onMetronomeEnd).
 }
 
 /**

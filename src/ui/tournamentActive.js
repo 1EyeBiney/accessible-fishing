@@ -264,11 +264,6 @@ function _announce(text) {
   }
 }
 
-function _onTargetLocked(payload) {
-  const poiId = payload?.poiId ?? payload?.targetId ?? 'unknown location';
-  _announce(`Target locked: ${_titleCase(String(poiId))}.`);
-}
-
 function _onFinderResults(payload) {
   _announce(_fmtFinderResults(payload?.candidates, payload?.tier));
 }
@@ -383,7 +378,8 @@ export const tournamentActiveManifest = {
   onMount(_nextMode, _prevMode) {
     _unsubs = [
       // ── Targeting / casting ──────────────────────────────────────────────
-      bus.on('TARGET_LOCKED',          _onTargetLocked),
+      // NOTE: TARGET_LOCKED is handled by targetSelector.js which emits its own
+      // UI_ANNOUNCE with the candidate label. No duplicate handler here.
       bus.on('FISH_FINDER_RESULTS',    _onFinderResults),
       bus.on('FISH_FINDER_BLOCKED',    _onFinderBlocked),
       bus.on('CAST_LANDED',            _onCastLanded),
