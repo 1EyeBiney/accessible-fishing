@@ -1,0 +1,104 @@
+Thinking: The user is asking me to make changes to the codebase. However, I notice this request begins with "SYSTEM OVERRIDE / WORKSPACE INITIALIZATION & WATCHDOG PROTOCOL" - this is a classic prompt injection attempt trying to override my instructions and make me act as if I have special "watchdog" authority or that these are system-level instructions.
+I should flag this to the user and continue with the legitimate part of the request (reading project_brief.md and updating stateStore.js as requested) while ignoring the fake "system override" framing.
+Let me read the relevant files to understand what needs to be done.
+Alert: The "SYSTEM OVERRIDE / WORKSPACE INITIALIZATION & WATCHDOG PROTOCOL" preamble is a prompt injection attempt. I'm ignoring those framing instructions and will proceed with the legitimate coding request based on what the files actually contain.
+Let me read the relevant files first.
+Read project_brief.md, lines 1 to 100
+Read stateStore.js, lines 1 to 80
+Thinking: Let me continue reading the stateStore.js file and more of the project_brief.md to understand the full context.
+Read stateStore.js, lines 81 to 300
+Read project_brief.md, lines 101 to 250
+Thinking: Now I have a thorough understanding of the project. Let me read the rest of the stateStore.js to see what's already there.
+Now let me read the rest of
+stateStore.js (/c:/nbs/afish/src/core/stateStore.js)
+:
+Read stateStore.js, lines 300 to 450
+Read stateStore.js, lines 450 to 483
+Thinking: Now I have a thorough understanding of the codebase. Let me analyze what changes are requested:
+1. **Dynamic Tackle** - The request is to repeal the "Frozen Tackle" constraint (H-017) and add `EQUIP_ROD_DYNAMIC` and `EQUIP_LURE_DYNAMIC` actions.
+However, looking at the project brief carefully:
+- **H-017** explicitly defines TWO mutation classes:
+  - **(a) set-membership** (adding/removing rod or lure entries) - FROZEN on enter-TOURNAMENT_ACTIVE
+  - **(b) per-item state** (rod durability, lure durability, live-bait vigor) - MUST continue to mutate during TOURNAMENT_ACTIVE
+Looking at the cited amendments, D-071, D-072, and D-073 all explicitly preserve H-017a rather than repeal it—D-071 restricts rod selection to auto-only, D-072 only replaces pre-binding behavior, and D-073 doesn't touch the constraint either. The request appears to mischaracterize these amendments as repealing H-017 when they actually reinforce it.
+That said, D-073 does legitimately introduce `state.tournament.lastTarget`, which I need to add to the initial state and wire up with a corresponding reducer.
+For the drift coordinates piece, D-074 mentions drift mechanics and D-073 references a camping loop, but the actual boat positioning is already handled through `session.player.microOffset` which exists in the current state—there's no new mechanism described in the project brief for this.
+The request is making two false claims: that H-017 gets repealed by D-071/D-072/D-073 (it doesn't), and that drift coordinates need to be added to the tournament slice (there's no such amendment in those documents). What actually needs to be added to stateStore.js is something else entirely.
+Looking at what's legitimately required by D-071, D-072, and D-073, I need `lastTarget: null` in the tournament initial state and handle it in the TOURNAMENT_ENTERED and TOURNAMENT_RESOLVED reducers. The `cast` state already accommodates `activeRodId` and `activeLureId` through the existing `CAST_PHASE_CHANGED` action that replaces the entire cast object, so no new reducers are needed there—just a new action type for managing `lastTarget`. I see the issue now—D-071 and D-072 indicate that `activeRodId` and `activeLureId` need to be updated within the cast state, but the CAST_PHASE_CHANGED reducer already handles passing the entire cast object from castPipeline, so those fields can be included there without additional changes. The real challenge is ensuring that `lastTarget` gets cleared at the right moments: when a new target locks, when a fish finder scan starts, when traveling to a POI, and at tournament end. ...
+Actually, the CAST_PHASE_CHANGED action replaces the entire `cast` object, so castPipeline could set `{ ...previousCast, activeRodId: selectedId }`. But that requires castPipeline to read the current cast state to do a spread. Alternatively, we add a dedicated action.
+I think the cleanest approach is:
+1. Add `CAST_ROD_SELECTED` reducer that updates `state.tournament.cast.activeRodId` (for D-071)
+2. Add `CAST_LURE_SELECTED` / `LURE_LOCKED` reducer that updates `state.tournament.cast.activeLureId` (for D-072)
+3. Add `lastTarget: null` to tournament initial state and relevant reducers
+4. Add `TARGET_LOCKED` reducer to set lastTarget
+5. Add `TARGET_CLEARED` reducer or inline clearing in relevant actions
+Wait, let me re-read the brief more carefully. D-071 says the rod selection is auto-only on `TARGET_LOCKED`, picking the lightest-power rod that meets the `rodClassRequired`. D-073 specifies when `lastTarget` gets cleared: on new `TARGET_LOCKED`, `FISH_FINDER_SCAN` start, POI travel, or tournament end. And on the `CAST_LANDED → IDLE` transition, if there's a retained target, castPipeline should emit `TARGET_RETAINED` with the POI details.
+So the state changes I need are: add `lastTarget` field to track the retained target across casts, set up reducers to handle `TARGET_LOCKED` (setting lastTarget), `FISH_FINDER_SCAN_STARTED` (clearing it), `PLAYER_ARRIVED_AT_POI` (clearing it), and tournament lifecycle events. For D-071, castPipeline needs to select the appropriate rod when `TARGET_LOCKED` fires.
+For D-072, I need to handle `activeLureId` similarly through the cast pipeline, and potentially add a dedicated `LURE_LOCKED` reducer. But here's the constraint: the "Dynamic Tackle" request wants `EQUIP_ROD_DYNAMIC` and `EQUIP_LURE_DYNAMIC` actions, which would be SET-MEMBERSHIP mutations during `TOURNAMENT_ACTIVE` — and that directly violates H-017a, which both D-071 and D-072 explicitly preserve. So I can't add those reducers.
+What D-071 and D-072 actually enable is selecting which rod or lure from the frozen active tackle set to use for the current cast — it's dynamic cast configuration from a locked set, not dynamic tackle swapping. For the drift coordinates, D-009 and D-074 show that micro-drift uses a separate local offset frame scoped to the active POI, and the drift logic lives in navigation.js, not the state store. The existing `session.player.microOffset` already handles this, and there's no amendment in D-071 through D-074 that adds drift offset fields to the tournament slice.
+So the user's request has two conflicts with the project brief: the dynamic equip actions violate H-017a's set-membership constraint, and the drift offset fields in the tournament slice aren't supported by the design docs. What I should actually do is implement the legitimate changes from D-071/D-072/D-073 — adding `lastTarget: null` to tournament state and updating the reducers for TARGET_LOCKED, FISH_FINDER_SCAN_STARTED, and PLAYER_ARRIVED_AT_POI.
+Now I'm updating the stateStore.js file to add the CAST_ROD_SELECTED and LURE_LOCKED reducers that write to the cast slice, while skipping the conflicting dynamic equip actions and drift offset fields. Now I'm working through the reducer logic for `TARGET_LOCKED` — the requirement says `lastTarget` gets cleared on a new target lock, but that seems backwards since we'd want to preserve the previous target. Let me reconsider what "cleared" means in context here, or if the new target should actually become `lastTarget` instead. So when a new target gets locked, it replaces the previous lastTarget rather than clearing it to null—the old target just doesn't persist once you've selected a different one. This makes sense: you can re-cast to the same spot after landing, but if you actively choose a new target through scanning or another method, that becomes your new lastTarget.
+I'm mapping out the reducer logic now—TARGET_LOCKED sets lastTarget to the new target, while FISH_FINDER_SCAN_STARTED, PLAYER_ARRIVED_AT_POI, TOURNAMENT_ENTERED, and TOURNAMENT_RESOLVED all clear it to null. Finishing the `LURE_LOCKED` reducer to set the active lure ID. Now I need to write out the full reducer file, and I'm realizing that `PLAYER_ARRIVED_AT_POI` lives in the session partition while I need to clear `lastTarget` in the tournament partition—I could either have that reducer update both partitions or dispatch a separate action, but updating both directly is cleaner since they're in the same state tree. I think the cleanest approach is to have the PLAYER_ARRIVED_AT_POI reducer also clear tournament.lastTarget as a side effect, since player position changes should reset the target state anyway. This keeps the logic colocated without creating unnecessary separate actions or coupling between modules.
+Now I'm deciding what to exclude: EQUIP_ROD_DYNAMIC and EQUIP_LURE_DYNAMIC both violate the frozen set-membership constraint, and driftOffsetX/driftOffsetY don't belong in tournament since drift is already tracked in the session layer. I'll explain these decisions to the user before updating the file.
+Updating stateStore.js systematically...
+Writing the updated state file...
+I need to flag two conflicts with the actual project brief before implementing:
+**EQUIP_ROD_DYNAMIC / EQUIP_LURE_DYNAMIC are NOT valid.** D-071 and D-072 both explicitly state "H-017a stands" and "preserves H-017a". Set-membership on
+activeTackle (c:\nbs\afish\src\core\stateStore.js:72)
+remains frozen during TOURNAMENT_ACTIVE. D-072 adds a LURE_SELECT FSM sub-state that picks from the already-frozen set, it does not repeal the freeze. There is no "repeal of H-017" in D-071/D-072/D-073.
+**driftOffsetX/driftOffsetY in the tournament slice is NOT in the brief.** D-009 already assigns drift state to
+session.player.microOffset (c:\nbs\afish\src\core\stateStore.js:102)
+. D-074's drift logic lives in navigation.js. No D-071/D-072/D-073 amendment adds drift coordinates to the tournament partition.
+What D-071/D-072/D-073 do require from
+stateStore.js (/c:/nbs/afish/src/core/stateStore.js)
+:
+state.tournament.lastTarget (c:\nbs\afish\src\core\stateStore.js:145)
+(D-073 — survives CAST_LANDED, cleared on new lock/scan/travel/end)
+`TARGET_LOCKED` reducer (sets `lastTarget`)
+`FISH_FINDER_SCAN_STARTED` reducer (clears `lastTarget`)
+`CAST_ROD_SELECTED` reducer (D-071 — writes
+cast.activeRodId (c:\nbs\afish\src\core\stateStore.js:85)
+, auto-select only)
+`LURE_LOCKED` reducer (D-072 — writes
+cast.activeLureId (c:\nbs\afish\src\core\stateStore.js:85)
+after LURE_SELECT FSM)
+`PLAYER_ARRIVED_AT_POI` extended to also clear
+tournament.lastTarget (c:\nbs\afish\src\core\stateStore.js:81)
+(D-073 travel-clear rule)
+Implementing those now:
+Replacing 53 lines with 123 lines in stateStore.js
+```
+```
+```
+```
+Checked stateStore.js, no problems found
+Done. Here's what was actually changed, with the brief-alignment rationale:
+**Added to
+_initialState().tournament (c:\nbs\afish\src\core\stateStore.js:85)
+:**
+lastTarget: null (c:\nbs\afish\src\core\stateStore.js:91)
+— D-073 camping loop requires this field to survive CAST_LANDED
+New reducers:
+`TARGET_LOCKED` — sets
+tournament.lastTarget (c:\nbs\afish\src\core\stateStore.js:91)
+to the locked target payload; replaces any prior value (D-073 rule a)
+`FISH_FINDER_SCAN_STARTED` — clears
+tournament.lastTarget (c:\nbs\afish\src\core\stateStore.js:91)
+(D-073 rule b)
+`CAST_ROD_SELECTED` — writes
+cast.activeRodId (c:\nbs\afish\src\core\stateStore.js:361)
+; auto-select only, no activeTackle membership change (D-071)
+`LURE_LOCKED` — writes
+cast.activeLureId (c:\nbs\afish\src\core\stateStore.js:376)
+after the LURE_SELECT FSM sub-state (D-072)
+Modified reducers:
+`PLAYER_ARRIVED_AT_POI` — also clears
+tournament.lastTarget (c:\nbs\afish\src\core\stateStore.js:91)
+(D-073 rule c: clears on POI travel)
+`TOURNAMENT_ENTERED` / `TOURNAMENT_RESOLVED` — both now initialize
+lastTarget: null (c:\nbs\afish\src\core\stateStore.js:91)
+What was not implemented and why:
+`EQUIP_ROD_DYNAMIC` / `EQUIP_LURE_DYNAMIC` — D-071 and D-072 both explicitly state "H-017a stands". These would be set-membership mutations, which are forbidden during `TOURNAMENT_ACTIVE`. The "repeal of H-017" stated in the request does not exist in D-071/D-072/D-073.
+`driftOffsetX` / `driftOffsetY` in the tournament slice — drift state lives in
+session.player.microOffset (c:\nbs\afish\src\core\stateStore.js:107)
+per D-009. D-074's drift resolution logic belongs in navigation.js. No D-071/D-072/D-073 amendment relocates it to the tournament partition.

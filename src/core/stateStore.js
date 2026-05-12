@@ -77,13 +77,18 @@ function _initialState() {
      * activeTackle here is a frozen deep-copy of hub.activeTackle (H-017).
      * Set-membership of activeTackle is read-only during TOURNAMENT_ACTIVE;
      * per-item state (durability, vigor) writes continue via ITEM_DAMAGED (H-017).
+     *
+     * lastTarget (D-073): the most recently locked cast target. Survives CAST_LANDED
+     * so castPipeline can offer a re-cast shortcut. Cleared on new TARGET_LOCKED,
+     * FISH_FINDER_SCAN_STARTED, PLAYER_ARRIVED_AT_POI, and tournament end.
      */
     tournament: {
-      id:         null,
-      spec:       null,  // snapshot of the tournament spec at entry time
-      scanLocked: false, // D-043 — set by castPipeline/fightLoop; read by fishFinder/targetSelector
-      cast:       null,  // active 5-tap cast phase state managed by castPipeline
-      activeTackle: null, // frozen copy of hub.activeTackle
+      id:           null,
+      spec:         null,  // snapshot of the tournament spec at entry time
+      scanLocked:   false, // D-043 — set by castPipeline/fightLoop; read by fishFinder/targetSelector
+      cast:         null,  // active 5-tap cast phase state managed by castPipeline
+      activeTackle: null,  // frozen copy of hub.activeTackle (H-017 set-membership frozen)
+      lastTarget:   null,  // D-073 — { poiId, offset, candidateId, lockedAtMs, finderTier, recastCount }
     },
 
     /**
@@ -168,6 +173,7 @@ registerReducer('SETTINGS_UPDATED', (state, payload) => ({
 }));
 
 // --- Session: player position ---
+// Also clears tournament.lastTarget on POI travel (D-073 rule c).
 registerReducer('PLAYER_ARRIVED_AT_POI', (state, payload) => ({
   ...state,
   session: {
@@ -178,6 +184,9 @@ registerReducer('PLAYER_ARRIVED_AT_POI', (state, payload) => ({
       anchored:     payload.anchored    ?? false,
     },
   },
+  tournament: state.tournament
+    ? { ...state.tournament, lastTarget: null }
+    : state.tournament,
 }));
 
 registerReducer('PLAYER_MICRO_DRIFTED', (state, payload) => ({
@@ -289,6 +298,7 @@ registerReducer('TOURNAMENT_ENTERED', (state, payload) => ({
     spec:         payload.spec,
     scanLocked:   false,
     cast:         null,
+    lastTarget:   null, // D-073
     // Freeze a deep copy of hub.activeTackle into the tournament partition (H-017).
     // Set-membership is now read-only for the duration of TOURNAMENT_ACTIVE.
     activeTackle: JSON.parse(JSON.stringify(
@@ -305,6 +315,66 @@ registerReducer('TOURNAMENT_RESOLVED', (state) => ({
     scanLocked:   false,
     cast:         null,
     activeTackle: null,
+    lastTarget:   null, // D-073
+  },
+}));
+
+// --- Target retention (D-073) ---
+// TARGET_LOCKED sets lastTarget; it persists across CAST_LANDED so castPipeline
+// can offer a re-cast shortcut via TARGET_RETAINED. Cleared on: new TARGET_LOCKED
+// (replaced), FISH_FINDER_SCAN_STARTED, PLAYER_ARRIVED_AT_POI, tournament end.
+//
+// payload: { poiId, offset, candidateId, lockedAtMs, finderTier }
+// recastCount is NOT stored here — it is computed by castPipeline and included
+// in TARGET_RETAINED events for TTS coalescing only (D-073).
+registerReducer('TARGET_LOCKED', (state, payload) => ({
+  ...state,
+  tournament: {
+    ...state.tournament,
+    lastTarget: payload, // replaces any previous value (D-073 rule a)
+  },
+}));
+
+// FISH_FINDER_SCAN_STARTED clears lastTarget (D-073 rule b).
+registerReducer('FISH_FINDER_SCAN_STARTED', (state) => ({
+  ...state,
+  tournament: {
+    ...state.tournament,
+    lastTarget: null,
+  },
+}));
+
+// --- Cast sub-state: active rod and lure selection (D-071, D-072) ---
+// These are AUTO-SELECT writes into the cast object, NOT set-membership mutations.
+// H-017a (frozen activeTackle set-membership) is fully preserved — neither action
+// adds, removes, or reorders items in activeTackle.rods / activeTackle.lures.
+//
+// CAST_ROD_SELECTED (D-071): castPipeline picks the lightest rod in activeTackle
+// that satisfies the target's rodClassRequired after TARGET_LOCKED.
+// payload: { rodId: string }
+registerReducer('CAST_ROD_SELECTED', (state, payload) => ({
+  ...state,
+  tournament: {
+    ...state.tournament,
+    cast: {
+      ...(state.tournament.cast ?? {}),
+      activeRodId: payload.rodId,
+    },
+  },
+}));
+
+// LURE_LOCKED (D-072): emitted by castPipeline after the LURE_SELECT FSM sub-state
+// completes (player confirms a lure from activeTackle.lures, or default is accepted).
+// Transitions the cast FSM from LURE_SELECT → ARMED.
+// payload: { lureId: string }
+registerReducer('LURE_LOCKED', (state, payload) => ({
+  ...state,
+  tournament: {
+    ...state.tournament,
+    cast: {
+      ...(state.tournament.cast ?? {}),
+      activeLureId: payload.lureId,
+    },
   },
 }));
 
