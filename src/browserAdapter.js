@@ -29,6 +29,9 @@
  *   'Enter'      → ENTER
  *   'Escape'     → ESCAPE
  *   'Backspace'  → BACKSPACE
+ *   'KeyR'       → R              (Soft Retrieve — D-081 v1.17)
+ *   'KeyQ'       → Q              (Power Rip     — D-081 v1.17)
+ *   'KeyF'       → F              (Sonar Request — D-041; dual-bound with Enter)
  *
  * UI_ANNOUNCE contract:
  *   Any engine subsystem may emit:  bus.emit('UI_ANNOUNCE', { text: '...' })
@@ -98,6 +101,11 @@ const _KEY_MAP = new Map([
   ['NumpadEnter','ENTER'],
   ['Escape',     'ESCAPE'],
   ['Backspace',  'BACKSPACE'],
+
+  // Phase 1 key-binding lock (D-081 v1.17)
+  ['KeyR',       'R'],   // Soft Retrieve
+  ['KeyQ',       'Q'],   // Power Rip
+  ['KeyF',       'F'],   // Sonar Request (dual-bound with Enter via inputAdapter, D-041)
 ]);
 
 // ---------------------------------------------------------------------------

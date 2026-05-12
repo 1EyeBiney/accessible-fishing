@@ -26,6 +26,17 @@
  *   Calls keyDown then keyUp at the same clock time (heldMs = 0 → always produces a
  *   tap event). Useful for accessibility adapters and the test harness.
  *
+ * Key-binding lock (D-081 v1.17):
+ *   In addition to the generic INPUT_<TYPE> tap events, three logical types have
+ *   special domain-event bindings wired here (per D-010, so all consumers are
+ *   decoupled from raw key codes):
+ *     R     → INPUT_R (Soft Retrieve — consumed by castPipeline, D-081)
+ *     Q     → INPUT_Q (Power Rip   — consumed by castPipeline, D-081)
+ *     F     → INPUT_F (one of two Sonar Request keys; see REQUEST_SCAN below)
+ *   Dual-bind: both F-tap and ENTER-tap emit a REQUEST_SCAN bus event (D-041).
+ *   REQUEST_SCAN is blocked at the fishFinder level while scanLocked is set (D-043),
+ *   so no guard is needed here — the adapter emits unconditionally.
+ *
  * Lockout and tap interaction:
  *   If keyDown is blocked by lockout, no hold is recorded. A subsequent keyUp with no
  *   hold record and an active lockout silently no-ops (the DOWN was already blocked;
@@ -100,11 +111,22 @@ function _emitUp(type, payload, source, atMs, reason = null) {
 
 /**
  * Emit the tap events (INPUT_<TYPE> + generic INPUT) after a short hold.
+ *
+ * Dual-bind (D-041, D-081 v1.17):
+ *   F-tap   → also emits REQUEST_SCAN
+ *   ENTER-tap → also emits REQUEST_SCAN
+ * Both bindings are unconditional here; fishFinder enforces the scanLocked
+ * mutex (D-043) so no guard is needed in the adapter layer.
  */
 function _emitTap(type, payload, source, atMs) {
   const evt = { type, payload, atMs, source };
   bus.emit(`INPUT_${type}`, evt);
   bus.emit('INPUT',         evt);
+
+  // REQUEST_SCAN dual-bind: F key and Enter key both request a sonar scan (D-041).
+  if (type === 'F' || type === 'ENTER') {
+    bus.emit('REQUEST_SCAN', { atMs, source });
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,6 @@
+1: I want Q and R for Quick reel and R for reel. Let's also use F for Fish Finder and make both Enter keys and F trigger Fish Finder/sonar
+2: using Q or R does not reset the target.
+3:  we need to consider "pump" or spacebar when in fish/fight. I do not want spacebar to be used a lot. I want it to be used strategically, to help bring in a trophy fish or bring in fish faster in general to help pad tonnage at end of tournaments.
+Spacebar should cause durability loss enough that rods break during the tournament so it's usage becomes even more strategic as each rod should only be allowed once each per tournament on the boat if they have access to that rod at that point, meaning if you break your rod via spacebar or something else, (bad casts over time maybe), then you lose access to htat particular rod the rest of the tournament and thus lose access to that particular distance targets.
+
+that tournament. The spacebar usage, if we made it like this, might be a lot less about timing and a lot more about strategic usage and then maybe it does comes into play on catching certain fish, either trophy size or something else. This might need further consideration from you and Opus to flesh this idea out fully. 4: yes get those rules straight as we have modified them lately

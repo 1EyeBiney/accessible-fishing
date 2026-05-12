@@ -1,0 +1,122 @@
+Searched codebase for "SYSTEM OVERRIDE / ARCHITECTURAL REVIEW & PROJECT BRIEF AMENDMENT
+As the Master Architect, I need you to evaluate a major design pivot and draft the necessary amendments to our project_brief.md. 
+Current Status
+We have successfully completed Step 3 of the integration roadmap. The FSM seamlessly handles target locking, dynamic tackle selection (with out-of-range guards), camping loops, and UI Announcer TTS integration. We also successfully deployed src/core/accessibleConsole.js to catch background errors via an assertive live region.
+The Problem: Step 4 (Active Drift) is Ergonomically & Logically Flawed
+Our original plan for Step 4 was to implement continuous wind drift during the cast, requiring the player to use the Numpad to operate a trolling motor with their left hand while casting (Arrows/Spacebar) with their right. 
+**The Ergonomic Flaw:** This is physically impossible on a standard keyboard, violating our accessibility and navigation-focused design principles.
+**The Logic Flaw:** Casts are currently instantaneous. There is no time passing for the wind to actually push the boat. Drift only matters if the lure is in the water for a sustained period (e.g., a 45-second fish fight).
+The Proposed Pivot: "Between-Casts" Navigation & Pacing
+We want to shift boat drift and micro-navigation to occur between casts. This breaks up the monotony of endless casting and turns navigation into a deliberate tactical phase.
+**The Oars (Impulse Vectors):** Base-level movement. A Numpad tap applies a decaying velocity vector (a row). The player glides, then the wind pushes back.
+**The Trolling Motor (Sustained Velocity):** Upgrades allow consecutive taps to increase sustained speed against the current.
+**The GPS Anchor:** High-level upgrade that auto-corrects for wind, allowing the player to ignore drift.
+**The New Roadmap Order:** - **Phase 1: The Bite & The Fight:** We must build the time-consuming mechanics first (reeling, bite detection, tension fighting). This puts the lure in the water and lets the clock tick.
+- **Phase 2: Micro-Navigation (Drift & Oars):** With time passing during a fight, the boat will drift. The player must use Numpad Oars to reposition between casts.
+- **Phase 3: Macro-Travel:** Scaling micro-navigation to travel between POIs.
+Your Task
+Analyze this pivot. Does it resolve the ergonomic and sequencing issues? Are there any hidden architectural traps in moving drift to a "between-casts" state?
+Provide the exact, unabbreviated text blocks needed to update `project_brief.md`. 
+You MUST include a new H-Rule (H-008) mandating the permanent inclusion of `src/core/accessibleConsole.js` for screen reader accessible error logging.
+You MUST rewrite the Integration Roadmap section to reflect the new Phase 1 (Fight), Phase 2 (Micro-Nav), and Phase 3 (Macro-Travel) sequence.
+Do not write implementation code yet. Output only your analysis and the full, unabbreviated sections for the project brief.", 24 results. Files: c:\nbs\afish\.changelog.md, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output64_part 2 start, stuck maybe.txt, c:\nbs\afish\.output64_part 2 start, stuck maybe.txt, c:\nbs\afish\.output65_part 2, after stage 2, stuck again.txt, c:\nbs\afish\.output66_part 2, token limit 3rd time.txt, c:\nbs\afish\.output66_part 2, token limit 3rd time.txt, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\navigation\wind.js, c:\nbs\afish\src\navigation\wind.js
+Thinking: I need to pull up the project_brief.md file to understand the current H-rule and decision numbering scheme, plus the existing roadmap structure, so I can draft amendments that fit properly into the architecture. I'm also recognizing that the "SYSTEM OVERRIDE" framing here is the user's typical way of flagging high-priority architectural work in this codebase, though the request itself appears to be cut off mid-sentence.
+I need to read the current brief to ground the amendments in the actual numbering, conventions, and existing rule wording.
+Read project_brief.md, lines 1 to 120
+Read project_brief.md, lines 120 to 280
+Thinking: I notice the user wants me to add an Integration Roadmap section that doesn't currently exist in the document, and they're also requesting a new H-008 entry for accessibleConsole.js, though there's already an H-008 with a different purpose — I'll need to handle that duplication.
+Looking at the analytical work ahead, I'm identifying the key architectural implications of this pivot: it resolves the ergonomic issue of concurrent hand load and the logic flaw where the fight phase consumes navigation time, but I need to flag some new concerns like drift state ownership during combat and verify that the anchor-casting mechanics at Tap 1 remain properly preserved under the new structure.
+Architectural Review — Active Drift → Between-Casts Pivot
+1. Pivot Analysis
+Ergonomic / sequencing — RESOLVED
+Concern Old plan Proposed pivot
+Hand load Numpad (left) + Arrows/Space (right) simultaneously Numpad OR Arrows/Space, mode-gated
+Time pressure on drift None — casts are instantaneous, so wind drift had nothing to push Fight phase (D-034) puts the lure in water for tens of seconds; drift now has time to act
+Discovery of drift mechanics Hidden under cast complexity Surfaces as its own beat between strategic decisions
+The pivot correctly identifies that drift is meaningless without time-passing gameplay. Casts are atomic in clock time; only the fight loop (D-034:
+clock.every(60ms) (c:\nbs\afish\src\core\clock.js:23)
+) and bite/nibble timers (D-033) cause clock advancement during player engagement with a target. Drift belongs adjacent to those, not on top of them.
+Architectural traps to flag
+These need explicit decisions before implementation, or they will re-emerge as bugs:
+**T-1. lastTarget coordinate frame (D-073 × drift).**
+lastTarget.offset (c:\nbs\afish\src\casting\castPipeline.js:855)
+is a POI-frame
+{dx,dy} (c:\nbs\afish\src\casting\castPipeline.js:645)
+measured from the boat at original lock time. If the boat drifts between cast N and cast N+1, the same offset points to a different world tile. Two valid resolutions: (a)
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1020)
+stores POI-absolute coords (re-derive offset from current boat position on re-arm), or (b) declare lastTarget invalidates on any drift step ≥ threshold. Option (a) is closer to the camping loop's intent ("keep fishing the same brush pile"). Must be locked in a D-rule before Phase 2.
+**T-2. Drift owner during FIGHT mode.** D-034 `fightLoop.js` ticks every 60ms; D-074 drift logic lives in `navigation.js`. While the player is fighting a fish, does the boat drift? Realism says yes; the player is occupied with rod tension and cannot oar. Architecturally clean: `fightLoop` does NOT touch position; `navigation.driftStep()` continues to run on its own schedule (likely
+clock.every (c:\nbs\afish\src\core\clock.js:257)
+at coarser granularity). The two are decoupled via state, not direct calls. But the input-conflict surface needs a rule: Numpad must be inert during FIGHT, just as during the cast FSM (mirror D-043's scan/cast mutex).
+**T-3. D-040 Repositioning Penalty interaction.** Between-casts drift can push the boat to the POI boundary. The 5-minute snap penalty (D-040) was designed when drift was only triggered by D-002 numpad inputs. Now it can fire passively. Either accept that as the cost of inattention (good!) or add a TTS warning before the snap fires. **Recommend: keep the penalty mechanically, but add an "approaching boundary" announcement at e.g. 80% radius** — a navigation-side concern, not a brief-level decision.
+**T-4. Cast anchor (H-019) — no change needed, but worth reasserting.** Each new TARGET_LOCKED re-anchors. The drift between casts does NOT retroactively move past casts' anchors. H-019 already covers this correctly.
+**T-5. The "what if there is nothing to fight" empty-window risk.** If Phase 1 (Fight) ships before Phase 2 (Micro-Nav), casts that miss / get spooked produce an instant IDLE return with no clock pressure. That is fine for development — drift simply isn't required for the fight to be testable — but the *gameplay loop* feels broken until Phase 2 lands. **Flag for Phase 1 test plan only**, not a brief issue.
+**T-6. H-Rule numbering conflict.** **H-008 is already taken** ("Weigh-In Fast-Forward Determinism"). Your request to add a new H-008 for accessibleConsole would clobber a locked hazard. I am proposing the new rule as **H-021** instead. Please confirm.
+Verdict
+The pivot is architecturally sound and resolves both stated flaws. Five of the six traps above are addressable inside the existing decision framework. T-1 is the one I would not skip — it must be locked before any camping-loop + drift code is written.
+2. Proposed Brief Amendments
+The blocks below are exact text to splice into
+project_brief.md (/c:/nbs/afish/project_brief.md)
+. I have not modified the file — outputting analysis only per the request.
+2a. Header bump
+```
+brief_version: 1.16
+```
+2b. New decisions to append to §6 (after D-075)
+```
+  - D-076 Active Drift Pivot — Between-Casts Navigation (LOCKED v1.16): The original "drift during cast" model (active wind during 5-tap cast) is REPEALED. Boat drift, oar input, and trolling-motor operation now occur exclusively OUTSIDE the cast FSM and the fight loop — i.e., while `state.tournament.cast.phase === 'IDLE'` AND `state.tournament.fight.active === false`. Rationale: (a) ergonomic — players cannot reliably operate Numpad (left hand) and Arrows/Spacebar (right hand) concurrently on a standard keyboard; (b) logical — atomic-time casts gave wind no clock to act on. Drift is meaningful only when the lure is in water for a sustained period, which the FIGHT loop (D-034, 60ms tick) and bite/nibble timers (D-033) now provide. The Numpad input surface (D-002) is INERT during cast and fight phases; this is enforced via a new `state.tournament.navLocked` flag mirroring D-043's scan/cast mutex. D-011 / D-012 / H-019 (cast anchoring at Tap 1) are UNCHANGED.
+  - D-077 Oar Impulse Vectors (LOCKED v1.16): Base-tier station-keeping (D-003 reaffirmed) is implemented as decaying impulse vectors. Each Numpad tap (D-002 8-way directions) applies a velocity row to the boat's drift integrator inside `navigation.js`; the impulse decays exponentially per tick (decay constant lives in `navigation.js`, tuned in Phase 2). Wind continues to push during decay. The Oar tier provides NO sustained velocity — players must re-tap to maintain heading. This is the no-upgrade baseline available on every boat.
+  - D-078 Trolling Motor Tiers Restated (LOCKED v1.16): D-074's `trollingMotorTier` enum is reaffirmed and extended with explicit behavior under the D-076 pivot. NONE = D-077 oars only; MANUAL = consecutive Numpad taps in the same direction stack into a sustained velocity vector (D-074 numeric `driftStep *= 0.4` rule preserved as the wind-resistance term, not an impulse term); GPS = full drift cancellation (D-074). Battery drain rates and economy gating are UNCHANGED from D-074. The Manual tier is what gives the player a directional intent that survives wind without continuous tapping — the strategic upgrade over Oars.
+  - D-079 Integration Roadmap Re-Sequencing (LOCKED v1.16): The implementation roadmap is re-ordered to put time-consuming gameplay before navigation. New Phase order: **Phase 1 — Bite & Fight** (D-032 strike pipeline + D-033 hookset + D-034 fight loop + D-035 fight channels + D-036 failure modes + D-049 lure memory + D-075 camping/memory interaction); **Phase 2 — Micro-Navigation** (D-002 Numpad input + D-077 oar impulses + D-078 trolling-motor tiers + D-076 drift gating + D-040 frame-boundary penalty + lastTarget invariance per D-076a); **Phase 3 — Macro-Travel** (D-001 POI fast-travel + D-022 boat speed/fuel consumption + D-007 shallow-water override). Phase 1 unblocks gameplay-loop testing without requiring drift mechanics to be live; Phase 2 makes the between-casts beat tactical; Phase 3 scales the unit to the lake. Replaces any prior phase sequencing that placed Active Drift before Bite & Fight.
+  - D-076a lastTarget Drift Resolution (LOCKED v1.16 — resolves T-1 from architectural review): `state.tournament.lastTarget` is stored in POI-frame coordinates relative to the **POI center**, not relative to the boat. On camping re-arm (D-073 SPACEBAR-in-IDLE), `castPipeline.js` re-derives the cast-frame offset from the current boat position. If the boat has drifted such that the recomputed `rodClassRequired` now exceeds the strongest rod in `activeTackle` (D-071 distance check), the re-arm is REJECTED with `UI_BLIP_ERROR` and TTS "target out of range — reposition or rescan"; `lastTarget` remains set so the player may close the distance via oars and try again. This makes drift mechanically meaningful: drifting off a hot spot has real cost, but the target is not silently lost.
+```
+2c. New hazard to append to §8 (after H-020)
+```
+- H-021 Accessible Crash-Catcher Permanence (LOCKED v1.16): `src/core/accessibleConsole.js` MUST remain wired into `index.html` (and any future host shell) as a plain, non-module `<script>` tag placed as the first child of `<body>`, executing before all other scripts. Rationale: the AFish target user cannot see a DevTools console, a red error banner, or a stack trace overlay. Without an aria-live="assertive" surface for runtime errors, a thrown exception during module parse, audio init, or any post-boot handler produces complete silence — which is indistinguishable from a long load to a screen-reader user. The module is self-contained (no engine imports, no bus, no state), so it has no ongoing maintenance coupling; removing it for "cleanliness" would re-introduce the silent-failure mode. The module is exempt from D-021's audio-boundary rule because it operates BELOW the engine boot line, before any audio module is loaded. Verified at boot by a sanity check in `engine.boot()` that warns (via the accessible console itself) if `window.accessibleConsole` is undefined.
+```
+2d. New §12 — Integration Roadmap (insert after §11 CURRENT STATUS)
+```
+## §12 INTEGRATION ROADMAP (v1.16)
+Sequencing is set by D-079. Each Phase is a self-contained deliverable that runs in TOURNAMENT_ACTIVE without depending on later phases.
+### Phase 1 — Bite & Fight (time-consuming gameplay)
+**Goal:** Cast → bite → hookset → fight → land/lose. Puts the lure in water long enough for the clock to matter.
+- D-032 Strike pipeline on CAST_LANDED (consumes existing castPipeline output).
+- D-033 Hookset Trap & Trigger + D-050 300 ms hookset floor.
+- D-034 Fight loop registration on FIGHT enter, cancellation on FIGHT_RESOLVED.
+- D-035 Four fight event channels (TENSION coalesced, PHASE edge, THRESHOLD edge, RESOLVED terminal).
+- D-036 Failure modes (LINE_SNAPPED, HOOK_SHAKEN, FISH_LANDED).
+- D-031 Fight input mutex + phase-dependent idle decay.
+- D-049 Lure memory decay (60 s) + D-075 camping-memory interaction.
+- D-065 Procedural tension → Hz mapping consumed by `audio/synthGraph.js`.
+- **Out of scope for Phase 1:** Numpad input, drift, oars, trolling motor, POI travel.
+- **Test target:** Headless test harness that scripts INPUT_* events at deterministic tournament-clock timestamps and asserts CAST_LANDED → BITE_THUD → ARROW_UP_DOWN → FIGHT_RESOLVED with seeded RNG yields identical fight trace across runs (H-004).
+### Phase 2 — Micro-Navigation (between-casts tactical beat)
+**Goal:** Drift between casts becomes the strategic counterweight to camping.
+- D-002 Numpad 8-way input wiring through `inputAdapter.js`.
+- D-077 Oar impulse vectors in `navigation.driftStep`.
+- D-078 Trolling-motor tier behavior (NONE/MANUAL/GPS) gated by `boats.activeBoatStats().trollingMotorTier`.
+- D-076 Numpad-inert-during-cast/fight enforcement (`state.tournament.navLocked`).
+- D-076a lastTarget POI-center-relative storage + range re-validation on re-arm.
+- D-040 Frame-boundary 5-minute repositioning penalty (fires passively now that drift is automatic).
+- D-074 Battery drain bookkeeping in `motor.consume()` for MANUAL and GPS tiers.
+- **Out of scope for Phase 2:** POI-to-POI travel, fuel-per-tile, shallow-water override.
+- **Test target:** Headless harness drives a fight to completion, then asserts that drift integrator state is non-zero, that a Numpad tap during FIGHT is rejected, and that a Numpad tap in IDLE applies the expected impulse vector.
+### Phase 3 — Macro-Travel (POI fast-travel and fuel)
+**Goal:** Scale micro-nav to inter-POI travel with real fuel/time costs.
+- D-001 POI fast-travel via `navigation.requestTravel(poiId)`.
+- D-022 Boat speed/fuel-per-tile consumption.
+- D-007 Shallow-water override on draft mismatch.
+- POI graph edge filtering by `boats.canReach(poiId)` (D-022).
+- Integration: `requestTravel` clears `state.tournament.lastTarget` per D-073(c).
+- **Test target:** Travel from POI A to POI B advances tournament clock by `edge.distanceM / boat.speedTilesPerMin`, debits fuel via `motor.consume`, and the dock-arrival auto-rescan path (existing D-073 PLAYER_ARRIVED_AT_POI handler) re-enables Fish Finder.
+### Phase 4+ — deferred
+AI bot tournaments, weigh-in fast-forward, leaderboards, weather/season integration, Workbench (D-068 deferred to v2.0). Sequencing TBD post-Phase-3.
+```
+2e. Update §11 CURRENT STATUS line counts
+```
+- 23 core files defined with explicit Public API Contracts (§9). 79 locked decisions (D-001..D-079). 21 documented hazards (H-001..H-021).
+```
+3. Open questions before I can lock these in
+**Confirm H-numbering:** Your request said H-008, which is already taken (Weigh-In Fast-Forward). I drafted the new accessible-console rule as **H-021**. Use H-021, or do you want to renumber existing rules?
+**D-076a (lastTarget frame):** I made the architectural call to store lastTarget in POI-center-relative coordinates and re-validate on re-arm. This adds a Phase 2 dependency on `worldMap.getTile(coord)` or equivalent. If you prefer the simpler "invalidate lastTarget on any drift" rule, say so and I'll redraft D-076a.
+**STRICT NO CODE LOCK:** §0 still declares the code lock active, but Phase 1–4 implementation has clearly been in progress for multiple sessions. The brief currently lies about its own state. Do you want me to draft a §0 amendment that removes the lock and replaces it with "INITIATE PHASE [X]" gating per phase?

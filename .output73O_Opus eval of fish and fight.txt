@@ -1,0 +1,121 @@
+Searched codebase for "SYSTEM OVERRIDE / ARCHITECTURAL REVIEW & PROJECT BRIEF v1.17
+As the Master Architect, please evaluate a strategic refinement to "Phase 1: Bite & Fight" and draft the necessary amendments to project_brief.md.
+The Proposed Refinements: Mode-Awareness & Tactical Retrieval
+**State Announcer Layer (Navigation Assistance):**
+- We need explicit spoken cues to signal mechanical sub-loop transitions to prevent "dead air" for screen-reader users.
+- "Time to Cast": Triggered when a lure is locked and the FSM enters ARMED.
+- "Time to Fish": Triggered on CAST_LANDED (splashdown).
+- "Time to Fight": Triggered on FISH_HOOKED.
+**The Retrieval Pivot (Cast Abortion):**
+- To prevent players from being trapped in a "dead" cast, we need two methods to reel in a lure BEFORE a fish bites.
+- Soft Retrieve: 5-second tournament clock penalty. Silent (0 spook).
+- Power Rip: 2-second tournament clock penalty. Loud (+1 spook increment per D-038).
+- These actions immediately return the FSM to IDLE.
+**Ergonomic Reeling Control Reversal (D-031 Pivot):**
+- Flip the controls to better match physical rod ergonomics:
+  - DOWN ARROW (Held): Reel In (Increases tension).
+  - UP ARROW (Held): Give Drag / Rod Down (Decreases tension).
+- Spacebar ("The Side Thing"): Implement a "Tactical Pump." This is optional but beneficial.
+  - Mechanic: Tapping Spacebar during a fight applies a stamina drain to the fish (ending the fight faster) but adds a small "Line Wear" penalty or a 1-second clock penalty per tap.
+Your Task
+Analyze these refinements. Do the "Soft" and "Rip" retrieve times create a meaningful strategic choice against the tournament clock? Does the "Tactical Pump" create a balanced "side-thing" mechanic?
+Draft the exact, unabbreviated text blocks for `project_brief.md`.
+Update the Integration Roadmap (§12) for Phase 1 to include these retrieval actions and announcer cues.
+Define a new Hazard (H-022) regarding "Announcement Overlap" to ensure state cues do not mask critical tactical audio like "Nibble" pings.
+Do not write implementation code. Output only your analysis and the brief amendments.", 25 results. Files: c:\nbs\afish\.changelog.md, c:\nbs\afish\.changelog.md, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output65_part 2, after stage 2, stuck again.txt, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\tests\just in case.txt, c:\nbs\afish\tests\just in case.txt, c:\nbs\afish\tests\just in case.txt, c:\nbs\afish\tests\just in case.txt
+Architectural Review — Phase 1 Refinements (v1.17 candidate)
+1. Analysis
+Refinement A — State Announcer Layer
+Verdict: necessary, not optional. AFish's audio surface today carries continuous (tension), edge (phase change), categorical (TTS), and procedural (ping) channels — but no narrative channel. A screen-reader user transitioning from LURE_SELECT → ARMED → CAST_LANDED → FISH_HOOKED currently hears: lure name, metronome ticks, pitch sweep, splash, then silence until the first nibble. Three of those have no semantic label. "Time to Cast / Fish / Fight" is the missing reading-comprehension layer.
+Two architectural cautions:
+**Source of truth.** Announcer cues must NOT be re-derived in `audio/ttsQueue.js` from low-level events (that creates duplicate state machines). They are best emitted as first-class **`STATE_ANNOUNCE { token }`** events by the owner of each transition: `castPipeline` for ARMED + CAST_LANDED, `fightLoop` for FISH_HOOKED.
+**TTS priority.** These cues are **NORMAL** priority (D-062 ladder). They must NOT be HIGH/URGENT — those are reserved for catch-impact events. They MUST coalesce: a re-cast within 3 seconds should not bark "Time to Cast" twice in a row, and the cue should be silenced if a NIBBLE_THUD is queued within the next ~750 ms (this is the basis for H-022 below).
+Refinement B — The Retrieval Pivot
+Verdict: strong design. The current FSM has a brutal honesty problem: a bad cast (silent splash, no bite within ~30 s) leaves the player passively waiting for the clock to age them out. Two retrieve options turn idle dread into a tactical decision.
+Looking at the numbers against the clock:
+Option Clock cost Spook cost When to use
+Wait it out ~30–90 s (bite timer) 0 First cast, fresh water
+Soft Retrieve 5 s 0 Bad cast on undisturbed cover
+Power Rip 2 s +1 (decays 12 s per D-038) Bad cast where pressure already matters more than spook
+The choice is real: in early game (cold water, fresh POI) Soft is correct; late tournament (clock pressure, water already pressured) Rip is correct. The 12-second spook decay (D-038) means Rip is locally recoverable but expensive if chained.
+One refinement I'd push back on slightly: **Power Rip should drop the lure at the boat, NOT clear
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1020)
+.** This preserves D-073 camping — the player ripped the cast because they spooked themselves, not because they want a new target. The next SPACEBAR-in-IDLE should still camp the retained target. If you'd prefer Rip to also clear lastTarget as a heavier "reset" action, the brief amendment below can be adjusted.
+A non-obvious trap: both retrieves must cancel any in-flight bite timer scheduled by D-032's strike pipeline (a bite may already be scheduled at CAST_LANDED + N ms before the player rips). Without that cancel, a ghost BITE_THUD could fire after the FSM has returned to IDLE.
+Refinement C — Reeling Control Reversal + Tactical Pump (D-031 amendment)
+Verdict: ergonomically correct, mechanically sound. Pulling DOWN on a rod is reeling in fishing reality; pushing UP is giving drag. Players already learned ARROW_UP for Tap 1/3 backswing and ARROW_DOWN for Tap 5 splashdown — extending ARROW_DOWN as "the active aggression key" is consistent. The current scheme (Spacebar = reel, ARROW_DOWN = drag) is the inverse of intuition and should never have shipped.
+Tactical Pump analysis:
+Cost Benefit Balance
+1-second clock penalty per tap Stamina drain on fish (shorter fight) Self-limiting — spammers lose more clock than they save
+Modest line-wear (durability) Same Equipment cost forces rotation
+Replaces D-031 SPACEBAR's old role Frees Spacebar for an optional mechanic, not a mandatory one Accessibility win — non-pumpers can still land fish
+The math needs one specific guard: the stamina drain per pump must be less than the natural stamina drain from sustained reel-in (ARROW_DOWN held). Otherwise pump-spam becomes the dominant strategy and ARROW_DOWN becomes vestigial. Recommend PUMP_STAMINA_DRAIN = 0.5 × REEL_STAMINA_DRAIN_PER_TICK so a pump is worth roughly half a second of held reel, but costs a full second of clock — net negative for spam, net positive for tactical use on a tired fish.
+One conflict to flag: D-031 currently declares a STRICT MUTEX between SPACEBAR (reel) and ARROW_DOWN (drag). Under the new scheme, SPACEBAR is no longer reel — it is the Pump. There is no longer a natural mutex pair, because Pump is a momentary edge event and reel/drag are continuous holds. The mutex rule dissolves, not transfers. Holding ARROW_UP + ARROW_DOWN simultaneously is the new mutex case (reel + drag cancel each other → idle decay).
+Refinement D (implied) — H-022 Announcement Overlap
+Verdict: must exist. The acoustic stack at the bite-to-fight transition is:
+```
+T+0.000s   Splash SFX (procedural)
+T+0.050s   "Time to Fish" TTS (NORMAL)
+T+30-90s   Procedural nibble pings (1..N)
+T+~T_thud  BITE_THUD edge cue (procedural)
+T+~T_thud  HOOKSET_WINDOW opens (300-750 ms, D-033/D-050)
+```
+If "Time to Fish" arrives at T+0.050 and a fast bite timer fires at T+0.800, a slow TTS voice (some screen readers run ~120 wpm = ~500 ms/word, ~2 s for "Time to Fish") will still be speaking when the nibble ping arrives. The player misses the nibble. This is a fatal accessibility regression.
+Mitigation must live at the ttsQueue level: state-announcer cues are preemptable by procedural fight/bite events and deferred if a nibble is already queued.
+2. Proposed Brief Amendments
+2a. Header bump
+```
+brief_version: 1.17
+```
+2b. New decisions to append to §6 (after D-079)
+```
+  - D-080 Mode-Aware State Announcer (LOCKED v1.17): A new bus event `STATE_ANNOUNCE { token, atMs }` is introduced for narrative voice cues that bridge mechanical sub-loops. Emitted exclusively by the owner of each transition (NOT re-derived in `audio/ttsQueue.js`): `castPipeline.js` emits `STATE_ANNOUNCE { token: 'TIME_TO_CAST' }` on entry to ARMED (after LURE_LOCKED) and `STATE_ANNOUNCE { token: 'TIME_TO_FISH' }` on CAST_LANDED; `fightLoop.js` emits `STATE_ANNOUNCE { token: 'TIME_TO_FIGHT' }` on FISH_HOOKED (D-033 successful hookset). `audio/ttsQueue.js` consumes these at NORMAL priority (D-062) with a 3-second per-token coalescing window. Tokens map to short categorical phrases (≤ 4 words, D-042 categorical-only rule) via a lookup table in `audio/ttsQueue.js` — no inline strings in engine modules. STATE_ANNOUNCE is independent of the existing `CAST_PHASE_CHANGED` / `FIGHT_PHASE_CHANGED` channels: those remain for UI announcers and consumers that need mechanical detail; STATE_ANNOUNCE is the player-facing narration layer. Preemption rules are governed by H-022.
+  - D-081 Cast Abortion / Retrieve Actions (LOCKED v1.17): Two new actions are added to the cast FSM, available only while `cast.phase === 'ARMED'` OR during the inter-tap idle period that follows CAST_LANDED but precedes the first BITE_NIBBLE (D-032). **Soft Retrieve** = INPUT_R (or platform-equivalent — exact key bound in `inputAdapter.js`): tournament clock advances by **5 in-game seconds**, NO spook applied, any pending bite timer is cancelled, `lastTarget` is preserved (D-073 camping intact), FSM returns to IDLE, `STATE_ANNOUNCE { token: 'LURE_RETRIEVED' }` emitted. **Power Rip** = INPUT_SHIFT_R (or platform-equivalent): tournament clock advances by **2 in-game seconds**, `castSpookModel.applySplash` invoked at the lure's last known position with kind = `NORMAL` (spook increment +1 per D-038), pending bite timer cancelled, `lastTarget` preserved, FSM returns to IDLE, `STATE_ANNOUNCE { token: 'LINE_RIPPED' }` emitted. Both actions emit `CAST_ABORTED { mode: 'SOFT' | 'RIP', clockPenaltyMs, atMs }` for diagnostic and replay completeness. Neither action is available during the cast FSM's metronome / impact phases — those have the Bird's Nest whiff timer (D-015) as their abort path. Pending bite-timer cancellation is the responsibility of `fishBehavior.js` listening to `CAST_ABORTED` (H-014 boundary preserved — no direct import).
+  - D-082 Fight Control Ergonomic Reversal (LOCKED v1.17 — supersedes D-031 controls, preserves D-031 idle-decay math): The fight-loop control surface is reversed and the Tactical Pump is introduced. **ARROW_DOWN (held)** = Reel In (tension rises at REEL_TENSION_PER_TICK). **ARROW_UP (held)** = Give Drag / Rod Down (tension falls at DRAG_TENSION_PER_TICK). **SPACEBAR (tap)** = Tactical Pump: applies a one-shot fish-stamina drain (`PUMP_STAMINA_DRAIN = 0.5 × REEL_STAMINA_DRAIN_PER_TICK`), tournament clock advances by **1 in-game second** per tap, and `equipment.damageItem(activeRodId, 'PUMP_WEAR')` is invoked (line wear bookkeeping; magnitude defined in `equipment.js` per D-044). Spacebar in FIGHT phase is non-mutex with ARROW holds — it is an instantaneous edge event. The new mutex rule is **ARROW_UP held simultaneously with ARROW_DOWN held**: both cancel, tension reverts to D-031 phase-dependent idle decay (Running drifts UP, Tired drifts DOWN — UNCHANGED). The 60ms fight tick (D-034) and four event channels (D-035) are UNCHANGED. The Pump's stamina drain is **less than** sustained reel drain by design so pump-spam is never the dominant strategy; the 1-second clock cost makes it a tactical accelerator on a tired fish, not a bypass. **D-031 status:** retained for idle-decay phase math (Running-UP / Tired-DOWN equilibria); the SPACEBAR + ARROW_DOWN mutex clause is REPEALED and replaced as described above. All references to "Spacebar = reel" in earlier brief revisions are obsolete.
+```
+2c. New hazard to append to §8 (after H-021)
+```
+- H-022 Announcement Overlap (LOCKED v1.17): The new `STATE_ANNOUNCE` channel (D-080) speaks short narrative phrases ("Time to Fish") at NORMAL priority. A TTS phrase of even 1.5–2 s can mask a procedural BITE_NIBBLE ping or BITE_THUD edge cue if those arrive before the phrase finishes. Masking a nibble = silent loss of the hookset window (D-033) = silent loss of the fish to a screen-reader user. Mitigation, owned by `audio/ttsQueue.js`: (a) any STATE_ANNOUNCE token is **preemptable** — when a `BITE_NIBBLE`, `BITE_THUD`, `FIGHT_THRESHOLD_CROSSED`, or `FIGHT_RESOLVED` arrives mid-utterance, the queue invokes the platform TTS cancel/stop method immediately and re-arms; (b) STATE_ANNOUNCE is **deferred** if a bite timer's scheduled fire time falls within `(now, now + estimatedUtteranceMs + 250ms)` — the announcer waits and is requeued after the bite resolves or the window passes; (c) two STATE_ANNOUNCE tokens within 3 s coalesce per D-080. URGENT and HIGH priority cues (D-062 catch announcements) preempt STATE_ANNOUNCE under the existing ladder — no new code path needed for those. The procedural finder ping (D-065) and procedural metronome/sweep (D-021 addendum) are not TTS and are unaffected by this hazard; they share an audio bus but not the TTS queue.
+```
+2d. Update §12 INTEGRATION ROADMAP Phase 1 (replace existing Phase 1 block)
+```
+### Phase 1 — Bite & Fight (time-consuming gameplay)
+**Goal:** Cast → bite → hookset → fight → land/lose. Puts the lure in water long enough for the clock to matter. Includes the cast-abortion off-ramps and narrative voice cues that make the loop screen-reader-legible.
+- D-032 Strike pipeline on CAST_LANDED (consumes existing castPipeline output).
+- D-033 Hookset Trap & Trigger + D-050 300 ms hookset floor.
+- D-034 Fight loop registration on FIGHT enter, cancellation on FIGHT_RESOLVED.
+- D-035 Four fight event channels (TENSION coalesced, PHASE edge, THRESHOLD edge, RESOLVED terminal).
+- D-036 Failure modes (LINE_SNAPPED, HOOK_SHAKEN, FISH_LANDED).
+- **D-082 Fight Control Ergonomic Reversal** — ARROW_DOWN = reel, ARROW_UP = drag, SPACEBAR = Tactical Pump (stamina drain + 1 s clock cost + line wear). New mutex: ARROW_UP × ARROW_DOWN held → idle decay (D-031 math preserved).
+- D-031 Phase-dependent idle decay (Running drifts UP, Tired drifts DOWN). Controls clause of D-031 is REPEALED by D-082; math clause is retained.
+- D-049 Lure memory decay (60 s) + D-075 camping-memory interaction.
+- D-065 Procedural tension → Hz mapping consumed by `audio/synthGraph.js`.
+- **D-080 STATE_ANNOUNCE bus channel** — `castPipeline` emits `TIME_TO_CAST` on ARMED entry and `TIME_TO_FISH` on CAST_LANDED; `fightLoop` emits `TIME_TO_FIGHT` on FISH_HOOKED. `audio/ttsQueue.js` consumes at NORMAL priority with 3 s coalescing.
+- **D-081 Cast Abortion / Retrieve Actions** — Soft Retrieve (5 s clock, 0 spook, `LURE_RETRIEVED` cue) and Power Rip (2 s clock, +1 spook via D-038 NORMAL splash, `LINE_RIPPED` cue). Both cancel pending bite timers via `CAST_ABORTED` event consumed by `fishBehavior.js`. Both preserve `lastTarget` (D-073).
+- **H-022 Announcement Overlap mitigation** wired in `audio/ttsQueue.js` — STATE_ANNOUNCE is preemptable by BITE_NIBBLE / BITE_THUD / FIGHT_THRESHOLD_CROSSED / FIGHT_RESOLVED, and deferred if a bite timer's fire-time falls within the estimated utterance window.
+- **Out of scope for Phase 1:** Numpad input, drift, oars, trolling motor, POI travel.
+- **Test targets (Phase 1):**
+  1. Headless harness scripts INPUT_* events at deterministic tournament-clock timestamps and asserts CAST_LANDED → BITE_THUD → ARROW_UP_DOWN → FIGHT_RESOLVED produces an identical fight trace across runs (H-004).
+  2. Cast-abortion harness: from ARMED, dispatch INPUT_R; assert clock advanced exactly 5000 ms, `castSpookModel.readSpook` at lure position is unchanged, FSM in IDLE, `lastTarget` preserved. Repeat with INPUT_SHIFT_R; assert clock advanced 2000 ms, spook level incremented by exactly 1.
+  3. Pump-economics harness: drive a fight where SPACEBAR is tapped N times; assert fight ends in fewer ticks than no-pump baseline AND tournament clock is N seconds longer than no-pump baseline.
+  4. Announcement-overlap harness: schedule a bite timer 800 ms after CAST_LANDED; assert `TIME_TO_FISH` is either deferred (started > BITE_THUD time) or preempted (cancelled before utterance completes); BITE_NIBBLE ping is audible to a screen-reader observer.
+```
+2e. Update §11 CURRENT STATUS counts
+```
+- 23 core files defined with explicit Public API Contracts (§9). 82 locked decisions (D-001..D-082). 22 documented hazards (H-001..H-022).
+```
+(Decisions: D-080, D-081, D-082 = +3 → 79 + 3 = 82. Hazards: H-022 = +1 → 21 + 1 = 22.)
+3. Open questions before I lock these in
+**Soft / Rip key bindings.** I proposed `INPUT_R` and `INPUT_SHIFT_R`. The brief does not currently declare an R-key binding. Two alternatives if R is reserved: (a) `INPUT_BACKSPACE` for Soft / `INPUT_DELETE` for Rip; (b) overload — `SPACEBAR` held > 1 s in ARMED-but-pre-NIBBLE = Soft, double-tap SPACEBAR = Rip. Option (b) keeps the input surface narrow but is harder to discover. Pick one before Phase 1 implementation begins.
+**Power Rip +
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1020)
+.** I drafted Rip as preserving
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1020)
+(camping intact). If you prefer Rip to clear
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1020)
+(a heavier "reset" semantics), D-081 needs one sentence flipped.
+3. Pump line-wear magnitude. D-082 leaves &#39;PUMP_WEAR&#39; magnitude in
+equipment.js (c:\nbs\afish\src\equipment\equipment.js:51)
+per D-044. Phase 1 implementation will need a number — recommend defining it now in the brief (e.g., PUMP_WEAR_PER_TAP = 0.01 of rod durability) so it doesn't get hand-waved during code.
+4. D-031 partial repeal. I drafted D-082 as "supersedes D-031 controls, preserves D-031 idle-decay math." If you'd prefer to fully repeal D-031 and re-state the idle-decay rules inside D-082, the brief amendment can be redrafted. The split-rule approach is auditable (each decision is single-purpose); the consolidated approach is easier to read in one place.
+5. Implementation gate. This amendment introduces three new D-rules and one H-rule but writes no code. Confirm whether you want me to execute the file write and lock at v1.17 with the open questions above resolved separately, OR whether you want the open questions resolved first and then a single clean write.

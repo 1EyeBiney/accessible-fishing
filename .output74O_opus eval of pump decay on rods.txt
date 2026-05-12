@@ -1,0 +1,96 @@
+Searched codebase for "SYSTEM OVERRIDE / ARCHITECTURAL EVALUATION: THE "RESOURCE BURN" PUMP
+Master Architect, we are considering a pivot to the "Tactical Pump" (Spacebar) mechanic in the Fight Loop. Before we codify this into project_brief.md, please evaluate the following proposal from a Systems Architecture and Game Design perspective.
+The Proposal:
+**The Mechanic:** The Spacebar "Pump" provides a significant stamina drain on the fish (landing it faster or helping with trophies). 
+**The High-Stakes Penalty:** Instead of a minor durability hit, the Pump causes aggressive line/rod wear. 
+**The Scarcity Loop:** Per H-017 (Frozen Loadout), if a rod breaks during TOURNAMENT_ACTIVE, it cannot be replaced from Hub inventory.
+**The Strategic Consequence:** Breaking a rod (e.g., your only Heavy rod) permanently removes the player's ability to reach certain distance-based targets (D-071) for the remainder of that tournament.
+Evaluation Criteria:
+**Strategic Depth:** Does this transition the "Pump" from a "reflex/timing" mechanic into a meaningful "Resource Management" decision?
+**Economic Impact:** How does this interact with the Hub economy? Does it make rod durability/upgrades too punishing or just more valuable?
+**Risk of "Dead Air":** For a navigation-focused, audio-first game, does losing access to distant targets create a "soft-lock" feeling where the player has nothing to do but wait for the clock to run out?
+**Red Team Analysis:** Identify any "hidden traps" or unintended consequences of making rod destruction a core tournament-management variable.
+Evaluate only. Do not draft the brief amendments yet.", 22 results. Files: c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\tests\just in case.txt
+Architectural Evaluation — "Resource Burn" Pump
+1. Strategic Depth — Verdict: STRONG WIN
+This pivots the Pump from a twitch question ("when do I press?") to a portfolio question ("how much of my Heavy rod's durability am I willing to spend right now?"). That is a categorical upgrade because:
+**Decision visibility.** A reflex mechanic is invisible to a screen-reader user mid-fight — they cannot see a stamina bar. A *resource* mechanic is announced ("Heavy Rod durability 80%") and can be deliberated *between* fights. Audio-first design strongly favors deliberation over reflex wherever possible.
+**Asymmetric stakes.** Pumping a 2 lb bass on your H rod is wasteful; pumping a possible-trophy on your only H rod is a genuine dilemma. The mechanic now scales its own importance with the fish — a property well-designed roguelike resource systems share.
+**Coupling with existing systems.** D-082's stamina-drain math becomes a *budget allocator*, not just a fish-shortener. D-071 (rod auto-select + range gating) becomes the consequence engine. D-073 (camping) becomes the temptation engine. H-017a (frozen tackle) becomes the enforcement engine. **Four existing decisions snap into a coherent loop without inventing new architecture.** This is the cleanest possible evidence that the design fits.
+**Tournament arc.** Currently a tournament has a flat strategic shape: cast, fight, weigh-in. Resource Burn introduces a *degradation curve* — your gear is best at minute 0 and worst at minute 90. That gives the in-game clock a second axis of meaning beyond D-013 wasted-time penalty.
+2. Economic Impact — Verdict: NET POSITIVE, with one boundary to watch
+Hub-side effects
+Hub system Effect Direction
+Rod variety purchasing (D-067 maxRods) Players are incentivised to buy redundancy, not just upgrade Healthy — adds a horizontal axis to the shop
+Rod tier progression (D-044) Higher-tier rods presumably take more pump-wear before breaking (durability stat in D-044 schema) Healthy — gear progression has a defensive purpose, not just an offensive one
+Workshop / repair Currently deferred to v2.0 (D-068) Architectural pressure: this raises the cost of D-068 deferral. See §4 trap R-3.
+Live bait vigor (D-051) Already a consumable-during-tournament; Pump wear extends that pattern to rods Healthy — the consumable pattern is now used twice, justifying the schema work
+The boundary worth watching: economy progression curve
+If pump-wear is too aggressive, players will hoard durability and never pump → mechanic is dead. If too lenient, players will pump every fight → no economic loop. The tuning band is narrower than it appears:
+**Pump should never break a healthy rod in a single fight.** Rule of thumb: `MAX_PUMPS_PER_FIGHT × PUMP_WEAR_PER_TAP < 0.30 × rod.durability`. A rod that started the tournament at 100% durability should survive any *one* fight under maximum pump abuse.
+**Pump SHOULD be capable of breaking a damaged rod.** A rod at 15% durability that gets pumped 5× on a trophy should snap. This is the moment of consequence the design is reaching for.
+This is a tuning problem, not a design problem — the math is locked once Phase 1 begins playtest.
+3. Risk of "Dead Air" — Verdict: REAL, MITIGABLE, MUST BE NAMED EXPLICITLY
+This is the single biggest concern in the proposal, and the framing is correct: for a sighted player, losing your H rod is a setback; for a screen-reader player, losing access to D-071 distant targets can produce a silent, undetectable dead-state where the audio surface presents fewer and fewer scan results until the player doesn't know whether the game is broken.
+The good news: D-071 already handles this case partially — out-of-range candidates remain in the candidate list as greyed entries announced as "out of range — re-rig at dock." The H rod being broken doesn't remove the targets; it just makes them all out-of-range. The screen-reader user receives the same "out of range" cue they always do.
+The bad news: all the deep candidates will announce "out of range," and the player may not realise the cause is "your H rod is broken" versus "this POI has no deep structure." That is the dead-air moment.
+Required mitigations (these MUST land alongside the mechanic, not after):
+**Rod-broken announcement.** When durability hits 0 during a fight, `STATE_ANNOUNCE { token: 'ROD_BROKEN', rodClass: 'H' }` fires (D-080 channel). This is not optional.
+**"Out of range — no Heavy rod available" enhancement.** The existing D-071 out-of-range cue should optionally specialise: if NO rod in
+activeTackle (c:\nbs\afish\src\casting\castPipeline.js:590)
+satisfies
+rodClassRequired (c:\nbs\afish\src\casting\castPipeline.js:697)
+, the cue becomes "out of range — no Heavy rod available — re-rig at dock". This tells the screen-reader user the cause, not just the symptom.
+3. POI travel as escape hatch. A player whose only H rod is broken can still:
+Move to a shallower POI where their L/ML rods are sufficient
+Use lighter rods to fish closer structure at the current POI
+Weigh in early (D-026) and accept the loss
+   None of those are "dead air" — they're degraded but viable tournament continuations. The mechanic only produces true dead-air if the player happens to be at a POI with only H-required candidates and refuses to travel. That is a player choice, not a design flaw.
+Verdict: the dead-air concern is fully mitigable with two announcement enhancements, and the resulting consequence is fair.
+4. Red Team — Hidden Traps
+R-1. The "First Tournament" Trap (HIGH SEVERITY)
+A new player enters their first tournament with a single rowboat (2 rods per D-067) and a baseline rod set. They hook a trophy on their only H rod. They pump enthusiastically because that's what the audio cue invited them to do. The rod breaks. They are now D-071-locked out of all deep structure on the lake.
+This is a tutorial / onboarding problem, not a mechanical problem, but it must be addressed before the mechanic ships. Two options:
+**Soft tutorialisation:** First-tournament rods have a 2× durability multiplier (one-time, per-profile flag) so the new player has room to learn the cost.
+**Audio coaching:** When durability falls below 25% during a fight, `STATE_ANNOUNCE { token: 'ROD_STRAINED', rodClass }` fires once per fight. This gives the player explicit warning before snap.
+Recommend both. Neither is expensive.
+R-2. The "Optimal = Don't Pump" Trap (MEDIUM SEVERITY)
+If the math is even slightly off, the optimal strategy is to never pump and always reel-only-with-ARROW_DOWN. This makes the mechanic vestigial.
+Counter-design: The pump should not only drain stamina — it should also shift the fight phase. Pumping a fish in Running phase should accelerate the transition to Tired phase (D-031 / fish state machine). That makes Pump tactically valuable independent of pure stamina arithmetic: you pump to force a state change, not just to grind stamina. A skilled player pumps once or twice at the right moment, not at all in the wrong moment, and never spams.
+This is a small addition to D-082's math contract: PUMP_PHASE_PRESSURE accelerates Running→Tired transition probability by some factor for N ticks after each tap.
+R-3. Workshop / Repair Architectural Pressure (MEDIUM SEVERITY)
+D-068 defers Workbench (crafting + repair) to v2.0. Under v1.x:
+Rods can be damaged during tournament (pump wear, D-082)
+Rods cannot be repaired during tournament (H-017a frozen tackle — correct)
+Rods cannot be repaired in Hub (Workbench deferred, D-068)
+The ONLY way to recover from rod wear is to **buy a replacement rod from the tackle shop**
+This is internally consistent and probably even desirable for v1.x (the economy loop is buy rods, not repair them), but it must be declared explicitly in the brief so it isn't treated as a bug. Add a sentence to D-082: "Rod durability is irreversible in v1.x — D-068 (Workbench Deferred) means damaged rods are replaced via `hubShops.js`, not repaired. This is intentional for the v1.x economy loop."
+R-4. Bus Event Ordering on Rod-Break Mid-Fight (MEDIUM SEVERITY)
+What happens if the rod's durability hits 0 mid-fight, while ARROW_DOWN is still held? Three possible interpretations, all need to be locked:
+Option Behavior Brief implication
+(a) Fight resolves immediately as LINE_SNAPPED (D-036), fish lost Cleanest, harshest
+(b) Fight continues but reel/drag/pump are inert; idle decay applies (Running → fish escapes; Tired → maybe land it) Realistic, but messy event ordering
+(c) Fight resolves as new failure mode ROD_SNAPPED (distinct from LINE_SNAPPED) Adds an event type but is auditable
+Recommend (c). It preserves D-036's three failure modes as fish-state outcomes and adds a fourth as a gear-state outcome. The catch-payout logic (D-027) can treat ROD_SNAPPED as "fish lost, no XP/$" without conflating it with operator error (LINE_SNAPPED). The replay-determinism test (H-004) needs the distinct event token to validate correctly.
+R-5. Pump-Spam Counter via Clock-Cost Is Insufficient (LOW SEVERITY)
+The 1-second-clock-per-pump cost from D-082 is correctly designed as a brake on pump spam, but it is only a brake when the player cares about the clock. In the late minutes of a tournament where the player is already locked into a losing position, the brake doesn't apply — they have nothing to lose from spamming. Pump-spam in that context is harmless (they're losing anyway) but produces a degenerate audio profile (rapid clock-advance announcements). 
+Minor mitigation: audio/ttsQueue.js should coalesce successive CLOCK_ADVANCED announcements (if any are emitted) — this is probably already implied by H-007 (audio queue backpressure) and doesn't need a new rule.
+R-6. The "Camping + Pump" Compounding Trap (LOW SEVERITY)
+D-073 (camping loop) + D-082 (pump) + a high-pressure POI = the player camps the same target, pumps every fight, breaks their rod, and now camping is also broken because the retained target requires the H rod they just snapped. This is a legitimate consequence chain, not a bug. But the brief should note it under D-075 (Lure Memory & Camping Interaction) as an example of "emergent strategic complexity, not new math." 
+R-7. Pump Wear vs. Line Wear vs. Rod Wear (LOW SEVERITY — terminology)
+The original proposal mentioned both "Line Wear" and rod destruction. D-044 schemas have rod durability but no separate line entity. Either:
+(a) Treat line as a property of the rod (current schema) — Pump wear hits rod durability, "line snaps" is a fight failure mode keyed off tension only
+(b) Add a new entity `Line` to D-044 — major schema work, probably deferred to v2.0
+Recommend (a). The mental model "Pump wears the rod, sustained tension wears the line, both share the rod's durability number" is plenty for v1.x and avoids a schema expansion. The brief should declare this explicitly to head off future confusion.
+5. Architectural Recommendation
+The "Resource Burn" Pump is a strong design pivot worth committing to, conditional on the following being included in the v1.17 amendment (NOT deferred to a later version):
+**D-082 amendment** — replace minor line-wear language with explicit rod-durability hit; lock `PUMP_WEAR_PER_TAP`, `PUMP_STAMINA_DRAIN`, `PUMP_PHASE_PRESSURE` constants (or commit to setting them in Phase 1 implementation).
+**D-080 extension** — three new STATE_ANNOUNCE tokens: `ROD_STRAINED`, `ROD_BROKEN`, and an enhanced out-of-range cue that names the missing rod class.
+**D-036 extension** — add `ROD_SNAPPED` as a fourth fight failure mode distinct from `LINE_SNAPPED`.
+**D-082 clause** — irreversibility note pointing at D-068 deferred Workshop, declaring this is intentional v1.x economy design.
+**New H-rule (H-023?)** — first-tournament onboarding safety: 2× rod durability multiplier on the first profile-level tournament entry, OR equivalent tutorialisation guard. Without this, the mechanic punishes new players for engaging with the cue the game itself offered.
+If those five elements land together, the mechanic is shippable and the dead-air concern is fully mitigated. If any are deferred, the mechanic should be deferred with them — partial implementation produces silent failures for screen-reader users, which is the one failure mode AFish cannot afford.
+Decision needed from you
+**Commit to all five elements above** → I'll draft the v1.17 amendment in the next turn.
+**Commit to a subset** → tell me which, and I'll flag what I think the residual risk looks like.
+**Pivot or kill** → if any of the red-team items (especially R-1 onboarding or R-3 Workshop pressure) feel too expensive, the alternative is the lighter "Tactical Pump" from the prior v1.17 draft, which has lower strategic depth but also lower implementation surface.

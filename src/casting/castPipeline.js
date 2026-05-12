@@ -141,13 +141,50 @@
  *   CAST_PHASE_CHANGED   { cast: { phase, ...extra } | null, atMs }
  *   AUDIO_METRONOME_TICK { phase, beatIndex, totalBeats, atMs }
  *   AUDIO_PITCH_SWEEP    { phase, direction, durationMs, atMs }
+ *   AUDIO_STOP_SWEEP     { atMs }
  *   CAST_BIRDS_NEST      { nestDurationMs, phase, atMs }
  *   CAST_LANDED          { poiId, candidateId, finderTier, landing, target,
  *                          splashKind, scatterRadius, mitigationFactor, atMs }
+ *   CAST_ABORTED         { mode: 'SOFT'|'RIP', clockPenaltyMs, atMs }  (D-081)
  *   LURE_OPTIONS         { lures, recommendedLureId, atMs }  (D-072)
  *   LURE_LOCKED          { lureId, atMs }  (D-072)
  *   TARGET_RETAINED      { poiId, offset, candidateId, lockedAtMs, finderTier,
  *                          recastCount, atMs }  (D-073)
+ *   STATE_ANNOUNCE       { token: 'TIME_TO_CAST'|'TIME_TO_FISH'|'LURE_RETRIEVED'|'LINE_RIPPED', atMs }  (D-080)
+ *
+ * ── Cast Abortion / Retrieve Actions (D-081 v1.17) ───────────────────────────
+ *
+ *   Available in ARMED state (pre-cast) or in IDLE state when a previous cast
+ *   has landed (indicated by _lastLandingCoord being non-null).
+ *   Both actions preserve state.tournament.lastTarget (D-073 camping intact).
+ *   Neither action is available during the metronome / impact phases — those
+ *   phases use the Bird's Nest whiff timer as their only abort path (D-015).
+ *
+ *   INPUT_R — Soft Retrieve:
+ *     Clock penalty: SOFT_RETRIEVE_CLOCK_PENALTY_MS (5000 ms)
+ *     Spook: none applied (lure exits cleanly)
+ *     Emits: STATE_ANNOUNCE { token: 'LURE_RETRIEVED' }
+ *     Emits: CAST_ABORTED { mode: 'SOFT', clockPenaltyMs: 5000, atMs }
+ *     Then:  clock.tick(5000)  (after CAST_ABORTED so fishBehavior cancels
+ *            pending bite timers before the tick can fire them)
+ *
+ *   INPUT_Q — Power Rip:
+ *     Clock penalty: POWER_RIP_CLOCK_PENALTY_MS (2000 ms)
+ *     Spook: castSpookModel.applySplash at lure's last known position, kind=NORMAL (+1 D-038)
+ *            (uses _lastLandingCoord if available; uses target coord from ARMED state)
+ *     Emits: STATE_ANNOUNCE { token: 'LINE_RIPPED' }
+ *     Emits: CAST_ABORTED { mode: 'RIP', clockPenaltyMs: 2000, atMs }
+ *     Then:  clock.tick(2000)
+ *
+ * ── Mode-Aware State Announcer (D-080 v1.17) ─────────────────────────────────
+ *
+ *   castPipeline emits STATE_ANNOUNCE at four narrative transitions:
+ *     TIME_TO_CAST   — on LURE_LOCKED → ARMED (player is about to cast)
+ *     TIME_TO_FISH   — on CAST_LANDED (lure is in the water)
+ *     LURE_RETRIEVED — on Soft Retrieve abort
+ *     LINE_RIPPED    — on Power Rip abort
+ *   Consumed by audio/ttsQueue.js at NORMAL priority (D-062) with 3s coalescing.
+ *   H-022: STATE_ANNOUNCE is preemptable by BITE_NIBBLE/BITE_THUD/FIGHT events.
  *
  * H-005 note: All _unsubs, _whiffHandle, _metronomeEndHandle, and _metronomeTickHandle
  *             are cancelled in onUnmount.
@@ -230,6 +267,18 @@ const MISMATCH_SCATTER_MULTIPLIER = 2.0;
 /** Wind drift scale: tiles of drift per (m/s of wind) at 0% mitigation. */
 const WIND_DRIFT_SCALE = 0.25;
 
+/**
+ * Tournament-clock penalty for Soft Retrieve (D-081, v1.17).
+ * Player manually retrieves the lure — a deliberate time cost.
+ */
+const SOFT_RETRIEVE_CLOCK_PENALTY_MS = 5_000;
+
+/**
+ * Tournament-clock penalty for Power Rip (D-081, v1.17).
+ * Player violently rips the lure — shorter penalty but creates +1 NORMAL spook.
+ */
+const POWER_RIP_CLOCK_PENALTY_MS = 2_000;
+
 /** Accuracy threshold above which the splash is SILENT (spook +0, D-038). */
 const SPLASH_SILENT_THRESHOLD = 0.75;
 
@@ -308,6 +357,16 @@ let _selectedLureIdx = 0;
  * For TTS coalescing only — NOT a math input (D-073 explicit).
  */
 let _recastCount = 0;
+
+/**
+ * Absolute tile coordinate where the lure most recently splashed down.
+ * Set on CAST_LANDED; cleared in _resetToIdle.
+ * Used by Soft Retrieve and Power Rip to know the lure's last known position.
+ * Also acts as the gate: non-null means "a cast has landed and we are in
+ * post-cast IDLE, eligible for retreat actions" (D-081).
+ * @type {{ x: number, y: number } | null}
+ */
+let _lastLandingCoord = null;
 
 /**
  * Bus unsubscribe functions acquired in onMount.
@@ -522,6 +581,7 @@ function _resetToIdle() {
   _mitigationFactor = 0;
   _lureOptions      = [];
   _selectedLureIdx  = 0;
+  _lastLandingCoord = null;
   // _recastCount is NOT reset here — it is reset on new TARGET_LOCKED (D-073).
 
   _dispatchPhase(null);
@@ -676,6 +736,24 @@ function _getPoiCenter() {
   } catch {
     return null;
   }
+}
+
+/**
+ * Return the absolute tile coordinate for the current _target offset.
+ * Used by Power Rip when aborting from ARMED state (lure not yet in water,
+ * but the player rips toward the intended target position — D-081).
+ * Returns null if target or POI center is unavailable.
+ *
+ * @returns {{ x: number, y: number } | null}
+ */
+function _getTargetAbsCoord() {
+  if (!_target) return null;
+  const poiCenter = _getPoiCenter();
+  if (!poiCenter) return null;
+  return {
+    x: Math.round(poiCenter.x + (_target.offset.dx ?? 0)),
+    y: Math.round(poiCenter.y + (_target.offset.dy ?? 0)),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -993,12 +1071,13 @@ function _onArrowDown(evt) {
   const splashKind  = _determineSplashKind();
 
   // Apply spook on the landing tile (H-003: sole write through castSpookModel).
+  // tileCoord is declared at function scope so Soft Retrieve / Power Rip can
+  // reference it as _lastLandingCoord in post-CAST_LANDED IDLE (D-081).
   const poiCenter = _getPoiCenter();
-  if (poiCenter) {
-    const tileCoord = {
-      x: poiCenter.x + Math.round(landing.dx),
-      y: poiCenter.y + Math.round(landing.dy),
-    };
+  const tileCoord = poiCenter
+    ? { x: poiCenter.x + Math.round(landing.dx), y: poiCenter.y + Math.round(landing.dy) }
+    : null;
+  if (tileCoord) {
     castSpookModel.applySplash(tileCoord, splashKind, atMs);
   }
 
@@ -1013,6 +1092,9 @@ function _onArrowDown(evt) {
     mitigationFactor: _mitigationFactor,
     atMs,
   });
+
+  // D-080: Narrative cue — lure is in the water, awaiting a bite.
+  bus.emit('STATE_ANNOUNCE', { token: 'TIME_TO_FISH', atMs });
 
   // D-073 Camping Loop: emit TARGET_RETAINED before resetting if the store
   // still holds a lastTarget.  _target is still valid at this point.
@@ -1031,7 +1113,13 @@ function _onArrowDown(evt) {
     });
   }
 
+  // NOTE: _resetToIdle is called here but _lastLandingCoord has been
+  // intentionally re-assigned to tileCoord ABOVE (before the CAST_LANDED emit)
+  // and will NOT be null after _resetToIdle in this path — we need it
+  // to survive so Soft Retrieve / Power Rip can reference it in IDLE.
+  // Re-assign after reset to restore the landing coord.
   _resetToIdle();
+  _lastLandingCoord = tileCoord;  // Restore: _resetToIdle clears it above (D-081).
 }
 
 /**
@@ -1083,6 +1171,9 @@ function _onSpacebar(evt) {
       // indefinitely before delivering Tap 1 (D-015 v1.14).
       _phase = 'ARMED';
       _dispatchPhase({ phase: 'ARMED', target: _target, atMs });
+
+      // D-080: Narrative cue — the lure is armed and ready to cast.
+      bus.emit('STATE_ANNOUNCE', { token: 'TIME_TO_CAST', atMs });
       break;
     }
 
@@ -1134,6 +1225,107 @@ function _onEsc(_evt) {
 }
 
 // ---------------------------------------------------------------------------
+// Retrieve / Abort handlers (D-081 v1.17)
+// ---------------------------------------------------------------------------
+
+/**
+ * Soft Retrieve (INPUT_R) — voluntarily retrieve the lure at a 5-second clock cost.
+ *
+ * Available in ARMED state (pre-cast, player changes their mind before the cast
+ * sequence begins) or in post-CAST_LANDED IDLE state (lure in water, waiting for
+ * a bite).
+ *
+ * Effects (D-081):
+ *   • No spook applied — lure exits cleanly.
+ *   • Emits STATE_ANNOUNCE { token: 'LURE_RETRIEVED' } (D-080 narrative layer).
+ *   • Emits CAST_ABORTED { mode: 'SOFT', clockPenaltyMs: 5000, atMs }.
+ *     fishBehavior.js listens to CAST_ABORTED and cancels pending bite timers
+ *     (H-014 boundary — no direct import between pipeline modules).
+ *   • FSM returns to IDLE (lastTarget preserved in stateStore per D-073).
+ *   • clock.tick(5000) advances the tournament clock AFTER CAST_ABORTED is emitted
+ *     so the bus-synchronous bite-cancellation fires before any timer callbacks.
+ *
+ * @param {{ atMs?: number }} evt
+ */
+function _onInputR(evt) {
+  const atMs = evt.atMs ?? clock.nowMs();
+
+  // Gate: only active in ARMED (pre-cast) or post-CAST_LANDED IDLE.
+  if (_phase === 'ARMED') {
+    // Pre-cast abort: lure hasn't touched water.
+  } else if (_phase === 'IDLE' && _lastLandingCoord !== null) {
+    // Post-cast abort: lure in water, waiting for bite.
+  } else {
+    return; // Not in an applicable state.
+  }
+
+  // Narrative cue first (D-080) so the TTS layer can pre-empt as needed (H-022).
+  bus.emit('STATE_ANNOUNCE', { token: 'LURE_RETRIEVED', atMs });
+
+  // Emit CAST_ABORTED BEFORE clock.tick so fishBehavior cancels bite timers
+  // synchronously before any scheduled callbacks could fire (H-014, D-081).
+  bus.emit('CAST_ABORTED', { mode: 'SOFT', clockPenaltyMs: SOFT_RETRIEVE_CLOCK_PENALTY_MS, atMs });
+
+  // Reset FSM. This clears _lastLandingCoord and _target but preserves
+  // state.tournament.lastTarget in stateStore (D-073 camping intact).
+  _resetToIdle();
+
+  // Apply the clock penalty. Any remaining scheduled callbacks that survived
+  // cancellation (edge case) will fire in strict chronological order (H-004).
+  clock.tick(SOFT_RETRIEVE_CLOCK_PENALTY_MS);
+}
+
+/**
+ * Power Rip (INPUT_Q) — aggressively rip the lure out at a 2-second clock cost
+ * with a +1 NORMAL spook penalty at the lure's last known position (D-081).
+ *
+ * Available in ARMED state or post-CAST_LANDED IDLE state (same gate as Soft Retrieve).
+ *
+ * Effects (D-081):
+ *   • castSpookModel.applySplash at lure position, kind = 'NORMAL' (+1 spook, D-038).
+ *     - In IDLE (post-cast): uses _lastLandingCoord.
+ *     - In ARMED (pre-cast): uses the intended target coord (ripping toward the target
+ *       disturbs that area of water). Falls back gracefully if coord unavailable.
+ *   • Emits STATE_ANNOUNCE { token: 'LINE_RIPPED' } (D-080).
+ *   • Emits CAST_ABORTED { mode: 'RIP', clockPenaltyMs: 2000, atMs }.
+ *   • FSM returns to IDLE (lastTarget preserved per D-073).
+ *   • clock.tick(2000) after CAST_ABORTED for the same ordering reason as Soft Retrieve.
+ *
+ * @param {{ atMs?: number }} evt
+ */
+function _onInputQ(evt) {
+  const atMs = evt.atMs ?? clock.nowMs();
+
+  // Gate: same states as Soft Retrieve.
+  let spookCoord = null;
+  if (_phase === 'ARMED') {
+    // Pre-cast: spook the intended target area (lure hasn't landed but the rip
+    // creates water disturbance near where the angler was aiming).
+    spookCoord = _getTargetAbsCoord();
+  } else if (_phase === 'IDLE' && _lastLandingCoord !== null) {
+    // Post-cast: spook at actual landing position.
+    spookCoord = _lastLandingCoord;
+  } else {
+    return; // Not in an applicable state.
+  }
+
+  // Apply spook BEFORE the reset (coord is still valid; H-003: sole write via castSpookModel).
+  if (spookCoord) {
+    castSpookModel.applySplash(spookCoord, 'NORMAL', atMs);
+  }
+
+  bus.emit('STATE_ANNOUNCE', { token: 'LINE_RIPPED', atMs });
+
+  // Emit CAST_ABORTED before clock.tick so fishBehavior can cancel bite timers
+  // synchronously (H-014, D-081).
+  bus.emit('CAST_ABORTED', { mode: 'RIP', clockPenaltyMs: POWER_RIP_CLOCK_PENALTY_MS, atMs });
+
+  _resetToIdle();
+
+  clock.tick(POWER_RIP_CLOCK_PENALTY_MS);
+}
+
+// ---------------------------------------------------------------------------
 // Mount manifest (H-005)
 // ---------------------------------------------------------------------------
 
@@ -1162,6 +1354,7 @@ modeRouter.registerMountManifest({
     _lureOptions          = [];
     _selectedLureIdx      = 0;
     _recastCount          = 0;
+    _lastLandingCoord     = null;
     _whiffHandle          = null;
     _metronomeEndHandle   = null;
     _metronomeTickHandles = [];
@@ -1183,6 +1376,12 @@ modeRouter.registerMountManifest({
 
       // ESC: cancel LURE_SELECT, return to IDLE (D-072).
       bus.on('INPUT_ESC',         _onEsc),
+
+      // INPUT_R: Soft Retrieve — 5 s clock penalty, 0 spook (D-081 v1.17).
+      bus.on('INPUT_R',           _onInputR),
+
+      // INPUT_Q: Power Rip — 2 s clock penalty, +1 NORMAL spook (D-081 v1.17).
+      bus.on('INPUT_Q',           _onInputQ),
     ];
   },
 

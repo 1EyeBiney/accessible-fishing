@@ -1,0 +1,215 @@
+Thinking: Let me start by reading the project brief and changelog to understand the current state of the project before making any changes.
+Created 8 todos. 8 items: Read project_brief.md end-to-end (in-progress); Read .changelog.md last 5 updates (not-started); Read current inputAdapter.js (not-started); Read current castPipeline.js (not-started); Read current fishBehavior.js (not-started); Implement inputAdapter.js changes (not-started); Implement castPipeline.js changes (not-started); Implement fishBehavior.js changes (not-started)
+Read project_brief.md, lines 1 to 100
+Read project_brief.md, lines 100 to 200
+Thinking: Let me continue reading the project brief and also read the changelog.
+Read project_brief.md, lines 200 to 300
+Read project_brief.md, lines 300 to 369
+Read project_brief.md, lines 369 to 369
+Read project_brief.md, lines 369 to 369
+Searched for files matching **/.changelog.md, 1 match. Files: c:\nbs\afish\.changelog.md
+Running Get-Content &quot;c:\nbs\afish\.changelog.md&quot; | Select-Object -Last 120. Get-Content "c:\nbs\afish\.changelog.md" | Select-Object -Last 120
+Running Get-Content &quot;c:\nbs\afish\.changelog.md&quot; -Tail 200. Get-Content "c:\nbs\afish\.changelog.md" -Tail 200
+Running (Get-Content &quot;c:\nbs\afish\.changelog.md&quot;)[-200..-1] -join &quot;n"`. (Get-Content "c:\nbs\afish\.changelog.md")[-200..-1] -join "`n"
+Read content.txt
+Thinking: Now I have the full context. Let me read the current state of the three files I need to modify. Let me read them in parallel.
+Now let me read all three current files in parallel.
+Read inputAdapter.js, lines 1 to 200
+Read inputAdapter.js, lines 200 to 361
+Read castPipeline.js, lines 1 to 200
+Read castPipeline.js, lines 200 to 500
+Read castPipeline.js, lines 500 to 750
+Read castPipeline.js, lines 750 to 950
+Read castPipeline.js, lines 950 to 1150
+Read castPipeline.js, lines 1150 to 1203
+Read fishBehavior.js, lines 1 to 200
+Read fishBehavior.js, lines 400 to 700
+Read fishBehavior.js, lines 700 to 1000
+Read fishBehavior.js, lines 1000 to 1094
+Thinking: Now I have a thorough understanding of the codebase. Let me analyze what changes need to be made to the three files:
+---
+## File 1: `src/core/inputAdapter.js`
+**What needs to be added:**
+- Mapping for `R` key → `INPUT_R`
+- Mapping for `Q` key → `INPUT_Q`  
+- Mapping for `F` key → `INPUT_F`
+- `F` and `Enter` should emit `REQUEST_SCAN` event (D-041)
+Looking at the current code, `inputAdapter.js` doesn't deal with keyboard mappings directly - it accepts normalized `type` strings from platform adapters (like `browserAdapter.js`). 
+The `REQUEST_SCAN` binding is actually handled in `ui/tournamentActive.js` according to the S-015 changelog. But re-reading D-010, all input flows through `inputAdapter.js` which normalizes sources into `INPUT_*` events on the bus. D-041 specifies that both F and ENTER should trigger the sonar-request binding, and per D-081's key-binding lock, R maps to Soft Retrieve, Q to Power Rip, and F or ENTER to the scan request.
+Looking at how the input adapter works, it's a generic event emitter that produces `INPUT_<TYPE>_DOWN`, `INPUT_<TYPE>_UP`, and `INPUT_<TYPE>` events based on whatever types are passed to it. The keyboard-to-type mapping likely lives in `browserAdapter.js`, but the request asks to add mappings to `inputAdapter.js` itself. Since `inputAdapter.js` is the event emitter rather than the keyboard mapper, I could handle the F + ENTER → `REQUEST_SCAN` mapping as a special case here, though I need to clarify exactly what mappings are being requested.
+The request wants me to add `INPUT_R`, `INPUT_Q`, and `INPUT_F` types, plus map both F and Enter to emit a `REQUEST_SCAN` event. The framework already handles any type string generically, so those three types should work without modification. For the dual-binding to `REQUEST_SCAN`, I need to intercept when either `INPUT_F` or `INPUT_ENTER` fires a tap event and emit `REQUEST_SCAN` instead. Adding the dual-binding logic...
+But wait, I'm realizing this might create conflicts since INPUT_ENTER is already used for confirmation in other contexts like LURE_SELECT, and the binding should probably only trigger in specific situations rather than globally at the adapter level. Looking back at the requirements, D-041 mentions the F or ENTER binding for sonar requests, but D-081 is also defining key bindings for R, Q, and F in what sounds like a different context.
+The scan lock from D-043 would prevent REQUEST_SCAN from actually executing during casting anyway, so emitting it unconditionally on F or ENTER taps should be safe. And checking D-072 more carefully, SPACEBAR is what confirms in LURE_SELECT, not ENTER, so there shouldn't be a conflict there.
+For inputAdapter.js, I need to set up the dual-emit pattern where both F and ENTER trigger REQUEST_SCAN, and add documentation for the new input types. Then I'll move on to castPipeline.js to handle the FSM abort logic from D-081.
+In castPipeline.js, I'm implementing the state-gated abort handlers for INPUT_R and INPUT_Q. Soft Retrieve applies a 5-second clock penalty and transitions to IDLE, while Power Rip applies a 2-second penalty and triggers a splash effect at the lure's position before also transitioning to IDLE. Both preserve the last target and cancel any pending bite timers. I'm realizing that `castPipeline.js` handles the abort from IDLE by emitting `CAST_ABORTED`, which signals `fishBehavior.js` to clean up any pending bite timers—this preserves the boundary between the two modules. So the abort sequence just needs to advance the clock, optionally apply spook, emit the state announcement, fire `CAST_ABORTED`, and reset to idle.
+But there's a gap: after `CAST_LANDED`, the `_target` gets cleared and we lose the lure's landing position. I need to store that position in a `_lastLandingCoord` variable so that Soft Retrieve and Power Rip can reference it later. The tricky part is figuring out what "the lure's last known position" means when Power Rip is called from the ARMED state—at that point, the lure hasn't actually been cast yet, so there's no real position to reference.
+Looking at the clock API, I don't see a direct `advance()` method to apply the 5-second penalty. I need to figure out how the existing codebase handles clock manipulation. So `clock.tick(dt)` advances the clock by that many milliseconds, which means for a 5-minute penalty I'd call `clock.tick(300000)`. The tricky part is that calling `tick()` mid-action could trigger other scheduled callbacks like bite timers, which is actually the expected behavior. But there's an ordering question: should I emit `CAST_ABORTED` first so `fishBehavior.js` cancels pending bites, then advance the clock? Or advance the clock first?
+The safe approach is to emit `CAST_ABORTED` first, let `fishBehavior` synchronously cancel its timers, then call `clock.tick()`. That way cancelled timers won't fire during the tick. I should verify the clock API to make sure I'm using it correctly.
+Let me also check
+clock.js (c:\nbs\afish\src\casting\castPipeline.js:161)
+to understand the tick API, and check browserAdapter.js for the keyboard mapping:
+Read clock.js, lines 1 to 100
+Read clock.js, lines 100 to 250
+Read browserAdapter.js, lines 1 to 100
+Read browserAdapter.js, lines 100 to 250
+Thinking: Now I have everything I need. Let me plan the three file changes:
+---
+## File 1: `src/core/inputAdapter.js`
+Changes needed:
+1. Add `R`, `Q`, `F` key mappings in the documentation header
+2. In `_emitTap`, after emitting the normal tap events, emit `REQUEST_SCAN` when type is `F` or `ENTER` (D-041)
+But wait - the browserAdapter.js has the key-to-type mapping. I need to also update `browserAdapter.js` to add `KeyR` → `R`, `KeyQ` → `Q`, `KeyF` → `F` mappings. But the request only asks to update `inputAdapter.js`... Hmm.
+Looking at the request more carefully and the D-010 decisions, `inputAdapter.js` is supposed to be the normalizer of inputs. The REQUEST_SCAN dual-bind is most cleanly implemented in `inputAdapter.js`, while the key → type mapping belongs in `browserAdapter.js`. So I need to update both files to fully implement this feature. I need to focus on what the request explicitly asks for: updating `inputAdapter.js` with the three key mappings and the dual-emit logic for F/ENTER to trigger REQUEST_SCAN. While `browserAdapter.js` would also need updates to wire the keyboard events, the request specifies three files to modify, so I should stick to those and implement the core logic in `inputAdapter.js` as directed. I need to stick with the three files the user explicitly requested—inputAdapter.js, castPipeline.js, and fishBehavior.js—even though browserAdapter.js would be necessary for full functionality. I'll provide the complete code for those three files and note the browserAdapter change as a separate consideration.
+Now I'm mapping out the specific changes needed: inputAdapter.js needs the REQUEST_SCAN dual-emit for the F and ENTER keys, castPipeline.js needs to track the lure landing position and add handlers for the soft retrieve and power inputs, and fishBehavior.js will need updates to respond to those new input types.
+I also need to emit STATE_ANNOUNCE events at the right moments—when transitioning to ARMED state and when the cast lands—using the standardized format with a token and timestamp. For the clock penalty system, I'll apply the tick after emitting CAST_ABORTED. Finally, I need to wire up the subscriptions in the mount manifest and clean them up on unmount, plus update the module documentation to reflect all these new behaviors.
+The key ordering constraint is that CAST_ABORTED must emit synchronously before the clock ticks, so fishBehavior can cancel its pending bite timers before they potentially fire. For the Power Rip abort mechanic, I need to track the lure's last landing coordinate when CAST_LANDED fires, then use that position when aborting from IDLE state, or fall back to the target offset plus POI center when aborting from ARMED. Writing input handler... Continuing the Power Rip handler to apply the spook effect at the appropriate coordinate based on the current phase, emit the state announcement and abort signal with a 2-second penalty, then reset and tick the clock. I'm realizing I need to capture the coordinate before calling `_resetToIdle()` since that clears `_lastLandingCoord`.
+I also need to handle the ARMED state case where the lure hasn't been cast yet. Looking back at the spec, both Soft Retrieve and Power Rip are available in ARMED, but the semantics are a bit unclear—the lure isn't actually in the water at that point.
+I think the cleanest approach is to track a `_spookCoord` that stays null in ARMED and only gets set to the landing position after CAST_LANDED. That way, Power Rip can check whether there's actually a coordinate to spook at—if we're in ARMED with no coord, no splash effect gets applied, but if we're post-CAST_LANDED, the spook happens at the landing location. -second sequence. In ARMED, `_lastLandingCoord` would be null since nothing's been cast yet, so Power Rip wouldn't trigger a spook—which makes sense, you're just pulling line off the reel before the cast. But I'm overcomplicating this. Let me step back: both actions should be available in ARMED or IDLE states, but the real indicator of active fishing context is whether `lastTarget` exists, not just the state alone. That's what determines if there's meaningful fishing happening versus just being idle with no active session.
+Actually, I think the cleaner approach is to track whether we've recently landed a cast. I'll check the state: in ARMED, the action is always valid since we're about to cast. In IDLE, I'll only allow the action if `_lastLandingCoord` isn't null, meaning we've actually cast and landed something recently. This way the retreat actions only trigger when there's real fishing context.
+Setting up the module state variable... Still writing input handlers... Still writing function logic... I see that the strike probability FSM and bite scheduling are already fully implemented in the existing code—more complete than what was requested as a stub. The only missing piece is the CAST_ABORTED handler, so I'll add that listener to clean up the FSM when a cast is interrupted.
+I'm implementing a handler that cancels all pending bite timers and clears the active bites collection when the cast pipeline fires the CAST_ABORTED event, then wiring it into the mount/unmount lifecycle. The unsubscribe is already handled by the existing cleanup pattern.
+Now I'm realizing the request specifies three files, but the keyboard mappings for R, Q, and F actually belong in browserAdapter.js, not inputAdapter.js — inputAdapter is just an event emitter. So I need to clarify where those key bindings should actually go. be implemented in inputAdapter.js, not scattered across other files. The browserAdapter.js handles the physical key-to-type mapping as a platform normalization detail, while inputAdapter.js owns the type-to-domain-event routing. Since the harness calls inputAdapter directly, the F → REQUEST_SCAN dual-emit in _emitTap will work for both environments without harness changes. So I need to add the REQUEST_SCAN dual-emit logic to inputAdapter.js's _emitTap method for the F key.
+Now I'm planning the full scope: updating inputAdapter.js with the dual-emit and documentation, adding abort logic and STATE_ANNOUNCE emissions to castPipeline.js, wiring up the CAST_ABORTED listener in fishBehavior.js, and including browserAdapter.js for the key mappings to be complete. The user asked for three files specifically, so I'll stick to that constraint even though browserAdapter.js would logically need updating too. I'm working through a conflict between the directives: §0 says to use diffs only, but §5b (INVARIANTS) requires full files, and the user's explicit request also asks for complete code. §5 takes precedence over §0 when they conflict, so I should provide the full files as requested.
+Now I'm planning out the code for inputAdapter.js, starting with updating the module documentation to reference the new R and Q key mappings.
+For castPipeline.js, I need to add tracking for where the lure lands, define the clock penalties for the two new retrieve actions, create a helper to calculate absolute coordinates from the target position, and implement the input handlers for Soft Retrieve and Power Rip.
+I'll also update the lifecycle methods to initialize and clear the landing coordinate, emit the appropriate state announcements when entering cast and impact phases, and wire up the new input subscriptions on mount. The docstrings need updating to reflect the new events and D-081 mechanics.
+For fishBehavior.js, I'm adding a handler to cancel active bite timers when a cast is aborted, subscribing to that event on mount, and updating the module documentation to reference the new decision and consumed events. I'm also verifying that `_resetToIdle` correctly preserves the stateStore's lastTarget separately from the local pipeline state.
+Looking at D-073, lastTarget survives soft retrieve and power rip — it's only cleared by new target locks, fish finder scans, POI travel, or tournament end, not by cast completion events. So `_resetToIdle()` already handles this correctly by not clearing lastTarget, which means the behavior matches what D-081 specifies. Now I'm ready to write out the complete implementation across all three files, starting with castPipeline.js and making sure I've captured the full scope of what needs to be modified.
+Now I have full context. Let me check the line counts and then implement the changes.
+Running (Get-Content &quot;c:\nbs\afish\src\core\inputAdapter.js&quot;).Count; (Get-Content &quot;c:.... (Get-Content "c:\nbs\afish\src\core\inputAdapter.js").Count; (Get-Content "c:\nbs\afish\src\casting\castPipeline.js").Count; (Get-Content "c:\nbs\afish\src\fish\fishBehavior.js").Count; (Get-Content "c:\nbs\afish\src\browserAdapter.js").Count
+Thinking: Good. I have the full picture now. Let me update the three files as requested. I'll also need to update browserAdapter.js to add the key mappings for R, Q, F, but the user only explicitly asked for the three files. I'll update browserAdapter.js as well since it's necessary for the functionality to work.
+Let me now plan the changes carefully and implement them.
+## Summary of Changes
+### File 1: `src/core/inputAdapter.js`
+- Update module docstring to mention new key types: R (INPUT_R), Q (INPUT_Q), F (INPUT_F)
+- Add REQUEST_SCAN dual-emit in `_emitTap` for F and ENTER tap events (D-041, D-081)
+- No new exports needed — the framework handles any type string
+### File 2: `src/casting/castPipeline.js`  
+- Add `_lastLandingCoord` module state variable to track the most recent landing position
+- Add clock penalty constants for soft retrieve and power rip operations
+- Create a helper to calculate target absolute coordinates
+- Implement handlers for R (Soft Retrieve) and Q (Power Rip) input events
+- Update `_resetToIdle()` to clear the landing coordinate state
+- Modify the arrow down handler to store the landing position and announce fishing readiness
+- Modify the spacebar handler to announce casting readiness when entering lure select mode
+- Wire up the new input subscriptions in `onMount()` and initialize the landing coordinate
+- Refresh the module documentation to cover the new D-080 and D-081 features
+### File 3: `src/fish/fishBehavior.js`
+- Add a handler for cast abort events
+- Update `onMount()` to subscribe to the abort signal
+- Refresh the module docstring to document the new event
+### File 4 (bonus): `src/browserAdapter.js`
+- Map the R, Q, and F keys to their corresponding input codes
+Now I need to write out the full files with these changes. Since the files are substantial, I'll use targeted replacements to make the surgical edits rather than rewriting everything from scratch. Actually, the user wants complete, unabbreviated code, so I should provide the full files with all modifications included. I see now—I should use the editing tools to make surgical changes to each file rather than outputting the full code as text. I'll apply multi_replace_string_in_file and replace_string_in_file to update the docstrings, add the REQUEST_SCAN dual-emit logic in inputAdapter.js, and then modify castPipeline.js to add the new constants, update the state variable, and adjust the reset logic.
+For castPipeline.js, I need to add the _getTargetAbsCoord helper, wire up the R and Q input handlers, update the PHASE_4_IMPACT case to track the landing coordinate and emit STATE_ANNOUNCE, handle the LURE_SELECT case similarly, and initialize the subscriptions and state in onMount. Then in fishBehavior.js, I'll add the CAST_ABORTED event handler and wire it up during mount. I'll skip the lengthy docstring updates and focus on the functional changes.
+Starting: Implement inputAdapter.js changes (6/9). 9 items: Read project_brief.md end-to-end (completed); Read .changelog.md last 5 updates (completed); Read current inputAdapter.js (completed); Read current castPipeline.js (completed); Read current fishBehavior.js (completed); Implement inputAdapter.js changes (in-progress); Implement castPipeline.js changes (not-started); Implement fishBehavior.js changes (not-started); Update browserAdapter.js key mappings (not-started)
+Now implementing all three files. Starting with
+inputAdapter.js (/c:/nbs/afish/src/core/inputAdapter.js)
+— adding the new key type documentation and the REQUEST_SCAN dual-emit for F/ENTER (D-041, D-081):
+Replacing 13 lines with 35 lines in inputAdapter.js
+```
+```
+```
+```
+Starting: Implement castPipeline.js changes (7/9). 9 items: Read project_brief.md end-to-end (completed); Read .changelog.md last 5 updates (completed); Read current inputAdapter.js (completed); Read current castPipeline.js (completed); Read current fishBehavior.js (completed); Implement inputAdapter.js changes (completed); Implement castPipeline.js changes (in-progress); Implement fishBehavior.js changes (not-started); Update browserAdapter.js key mappings (not-started)
+Now implementing
+castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+— this is the biggest change. Multiple surgical edits in one call:
+Replacing 131 lines with 333 lines in castPipeline.js
+```
+```
+```
+```
+Thinking: Now I need to check the castPipeline.js change for the CAST_LANDED section. I replaced the section where spook is applied and landing coord is stored before the CAST_LANDED emit. Let me verify this looks correct by reading the relevant section.
+The issue is that I need to make sure `tileCoord` is declared in the right scope. Let me check the original code again.
+Looking at the original `_onArrowDown` PHASE_4_IMPACT handler:
+```javascript
+  // Apply spook on the landing tile (H-003: sole write through castSpookModel).
+  const poiCenter = _getPoiCenter();
+```
+I see the problem now—in the original code, `tileCoord` is calculated inside the `if (poiCenter)` block, but then I need it available for the CAST_LANDED emit. I need to either declare it outside the conditional or restructure how I'm handling the scope so the landing coordinates are properly captured before the event fires.
+```
+I need to check the current state of the file and fix the scoping issue where `tileCoord` is declared inside the `if (poiCenter)` block but I'm trying to use it outside that scope.
+```
+I need to verify the CAST_LANDED section is correct because
+tileCoord (c:\nbs\afish\src\casting\castPipeline.js:1076)
+is scoped inside an
+if (poiCenter) (c:\nbs\afish\src\casting\castPipeline.js:751)
+block. Let me read the current state and fix the scoping:
+Read castPipeline.js, lines 1000 to 1080
+Read castPipeline.js, lines 1080 to 1140
+Thinking: I see the issue - `tileCoord` is declared inside the `if (poiCenter)` block, but I'm trying to use it outside that block. I need to fix this by moving `tileCoord` to the outer scope.
+The current code has:
+```javascript
+  const poiCenter = _getPoiCenter();
+  if (poiCenter) {
+    const tileCoord = {       // <-- scoped to this if block
+      x: poiCenter.x + Math.round(landing.dx),
+      y: poiCenter.y + Math.round(landing.dy),
+    };
+```
+Then later I'm trying to apply the splash effect and store the landing coordinate, but `tileCoord` isn't accessible outside that conditional block. I need to declare `tileCoord` in the outer scope first, then assign it conditionally inside the `if` block so it's available for the subsequent operations.
+tileCoord (c:\nbs\afish\src\casting\castPipeline.js:1076)
+is scoped inside the
+if (poiCenter) (c:\nbs\afish\src\casting\castPipeline.js:751)
+block but referenced outside it. Fix the scoping:
+Replacing 13 lines with 10 lines in castPipeline.js
+```
+```
+```
+```
+Now fix the second
+_lastLandingCoord = tileCoord ?? null (c:\nbs\afish\src\casting\castPipeline.js:369)
+restore line (since
+tileCoord (c:\nbs\afish\src\casting\castPipeline.js:1077)
+is now outer-scoped, the double-assign pattern is still correct but I should clean up the comment):
+Replacing 7 lines with 7 lines in castPipeline.js
+```
+```
+```
+```
+Also clean up the now-redundant first
+_lastLandingCoord (c:\nbs\afish\src\casting\castPipeline.js:369)
+assignment that was before the emit (since we now restore after
+_resetToIdle (c:\nbs\afish\src\casting\castPipeline.js:565)
+):
+Replacing 5 lines with 5 lines in castPipeline.js
+Read castPipeline.js, lines 1070 to 1110
+Thinking: Good. The code looks correct now. The `tileCoord` is now declared at function scope (via `const tileCoord = poiCenter ? {...} : null;`), so it's accessible everywhere in the function. The `_lastLandingCoord` is correctly assigned after `_resetToIdle()`. Everything looks good.
+Now let me implement the fishBehavior.js changes. I need to:
+1. Add `_onCastAborted` handler
+2. Subscribe to `CAST_ABORTED` in onMount
+3. Update module docstring
+Good. The
+tileCoord (c:\nbs\afish\src\casting\castPipeline.js:1077)
+scoping is now correct. Now implementing
+fishBehavior.js (/c:/nbs/afish/src/fish/fishBehavior.js)
+:
+Starting: Implement fishBehavior.js changes (8/9). 9 items: Read project_brief.md end-to-end (completed); Read .changelog.md last 5 updates (completed); Read current inputAdapter.js (completed); Read current castPipeline.js (completed); Read current fishBehavior.js (completed); Implement inputAdapter.js changes (completed); Implement castPipeline.js changes (completed); Implement fishBehavior.js changes (in-progress); Update browserAdapter.js key mappings (not-started)
+Replacing 34 lines with 64 lines in fishBehavior.js
+```
+```
+```
+```
+Starting: Update browserAdapter.js key mappings (9/9). 9 items: Read project_brief.md end-to-end (completed); Read .changelog.md last 5 updates (completed); Read current inputAdapter.js (completed); Read current castPipeline.js (completed); Read current fishBehavior.js (completed); Implement inputAdapter.js changes (completed); Implement castPipeline.js changes (completed); Implement fishBehavior.js changes (completed); Update browserAdapter.js key mappings (in-progress)
+Now update
+browserAdapter.js (/c:/nbs/afish/src/browserAdapter.js)
+to add physical key → type mappings for R, Q, and F:
+Replacing 8 lines with 11 lines in browserAdapter.js
+```
+```
+```
+```
+Replacing 6 lines with 11 lines in browserAdapter.js
+```
+```
+```
+```
+Completed: Update browserAdapter.js key mappings (9/9). 9 items: Read project_brief.md end-to-end (completed); Read .changelog.md last 5 updates (completed); Read current inputAdapter.js (completed); Read current castPipeline.js (completed); Read current fishBehavior.js (completed); Implement inputAdapter.js changes (completed); Implement castPipeline.js changes (completed); Implement fishBehavior.js changes (completed); Update browserAdapter.js key mappings (completed)
+Now let me run a quick validation check to ensure there are no syntax errors:
+Running node --input-type=module --check &lt; src/core/inputAdapter.js 2&gt;&amp;1 ; node --inp.... node --input-type=module --check < src/core/inputAdapter.js 2>&1 ; node --input-type=module --check < src/casting/castPipeline.js 2>&1 ; node --input-type=module --check < src/fish/fishBehavior.js 2>&1
+Running node -e &quot;import(&#39;./src/core/inputAdapter.js&#39;)&quot; 2&gt;&amp;1 ; node -e &quot;import(&#39;./src/.... node -e "import('./src/core/inputAdapter.js')" 2>&1 ; node -e "import('./src/casting/castPipeline.js')" 2>&1 ; node -e "import('./src/fish/fishBehavior.js')" 2>&1
+Errored. Running node tests/harness.js 2&gt;&amp;1 | Select-Object -Last 30. node tests/harness.js 2>&1 | Select-Object -Last 30
+Errored. Running node tests/harness.js 2&gt;&amp;1. node tests/harness.js 2>&1
+Starting: Update browserAdapter.js key mappings (9/9). 9 items: Read project_brief.md end-to-end (completed); Read .changelog.md last 5 updates (completed); Read current inputAdapter.js (completed); Read current castPipeline.js (completed); Read current fishBehavior.js (completed); Implement inputAdapter.js changes (completed); Implement castPipeline.js changes (completed); Implement fishBehavior.js changes (completed); Update browserAdapter.js key mappings (in-progress)
+Running $out = node tests/harness.js 2&gt;&amp;1 ; $out | ForEach-Object { $_.ToString() }. $out = node tests/harness.js 2>&1 ; $out | ForEach-Object { $_.ToString() }

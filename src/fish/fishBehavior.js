@@ -27,6 +27,9 @@
  *   D-049 — Lure memory time-decay: rejected lures forgotten after 60 in-game seconds.
  *   D-050 — Hookset window floor: 300ms hard floor (LOCKED).
  *   D-053 — Diurnal multipliers hand-tuned per species (DAWN/DAY/DUSK/NIGHT).
+ *   D-081 — CAST_ABORTED listener: cancels all pending bite timers when the player
+ *            issues a Soft Retrieve or Power Rip via castPipeline (H-014 boundary:
+ *            communication is bus-only, no direct import between pipeline modules).
  *
  * H-013 compliance:
  *   Pressure and Spook are ORTHOGONAL — separate state fields, separate decay rates,
@@ -44,7 +47,8 @@
  *   PRESSURE_APPLIED  { coord, kind, increment, storedLevel, atMs }
  *
  * Events consumed:
- *   CAST_LANDED — triggers evaluateStrike → scheduleBite pipeline
+ *   CAST_LANDED    — triggers evaluateStrike → scheduleBite pipeline
+ *   CAST_ABORTED   — D-081: cancels ALL pending bite timers (Soft Retrieve / Power Rip)
  */
 
 import * as bus            from '../core/eventBus.js';
@@ -1058,6 +1062,29 @@ function _onCastLanded(evt) {
 }
 
 // ===========================================================================
+// CAST_ABORTED handler (internal) — D-081 v1.17
+// ===========================================================================
+
+/**
+ * Cancel ALL pending bite timers when the player aborts the cast via
+ * Soft Retrieve (INPUT_R) or Power Rip (INPUT_Q).
+ *
+ * H-014 boundary: castPipeline communicates to fishBehavior exclusively through
+ * the CAST_ABORTED bus event — no direct import between casting and fish modules.
+ *
+ * The clock.tick penalty inside castPipeline fires AFTER this synchronous handler
+ * completes (because bus.emit is synchronous), so the cancelled timers cannot
+ * accidentally fire during the penalty tick — they are removed from _activeBites
+ * before the clock advances.
+ *
+ * @param {object} evt - CAST_ABORTED payload { mode, clockPenaltyMs, atMs }
+ */
+function _onCastAborted(_evt) {
+  for (const handle of _activeBites.values()) handle.cancel();
+  _activeBites.clear();
+}
+
+// ===========================================================================
 // Mount Manifest (H-005)
 // ===========================================================================
 
@@ -1078,7 +1105,10 @@ modeRouter.registerMountManifest({
     _populateAllPois(clock.nowMs());
 
     // Drive the strike pipeline from cast events.
-    _unsubs.push(bus.on('CAST_LANDED', _onCastLanded));
+    _unsubs.push(bus.on('CAST_LANDED',  _onCastLanded));
+
+    // Cancel pending bite timers when the player aborts the cast (D-081, H-014).
+    _unsubs.push(bus.on('CAST_ABORTED', _onCastAborted));
   },
 
   onUnmount(_prevMode, _nextMode) {
