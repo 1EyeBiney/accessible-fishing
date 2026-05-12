@@ -271,6 +271,14 @@
 </head>
 
 <body>
+  <!--
+    Accessible crash catcher — MUST be first in <body> so window.onerror
+    is in place before any other script runs and the panel is prepended above
+    all other content. Plain (non-module) script tag so it executes
+    synchronously and is not deferred behind ES module loading.
+  -->
+  <script src="./src/core/accessibleConsole.js"></script>
+
   <!-- Skip navigation for keyboard / switch users -->
   <a class="skip-link" href="#start-btn">Skip to Start button</a>
 
