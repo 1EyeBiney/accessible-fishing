@@ -26,6 +26,8 @@
  *     fromDockMin:    number,                        // reach.fromDockMin in game minutes
  *     structureScore: number,                        // static ranking score in [0..1]
  *     label:          string,                        // short TTS label string
+ *     distanceM:      number,                        // Euclidean distance from boat (D-071)
+ *     rodClassRequired: string,                      // UL|L|ML|M|MH|H|XH reach class (D-071)
  *   }
  *
  * Ranking model:
@@ -421,7 +423,9 @@ _index.set('DOCK', [
         reach:   { draftClass: 'SHALLOW', fromDockMin: 0 },
       },
     }),
-    label: 'Dock, 2.5m, gravel, ambush point',
+    label:            'Dock pilings, 2.5m, gravel, ambush point',
+    distanceM:        10,   // D-071: 10 m from boat — reachable with any rod
+    rodClassRequired: 'UL', // D-071: ultralight or heavier satisfies this target
   },
   {
     tileId:         'DOCK_mock_weedbed',
@@ -445,7 +449,9 @@ _index.set('DOCK', [
         reach:   { draftClass: 'SHALLOW', fromDockMin: 2 },
       },
     }),
-    label: 'Weed bed, 1.5m, sand, weed edge',
+    label:            'Shallow weed bed, 1.5m, sand, weed edge',
+    distanceM:        25,    // D-071: 25 m — medium-light rod required
+    rodClassRequired: 'ML',  // D-071: medium-light or heavier
   },
   {
     tileId:         'DOCK_mock_dropoff',
@@ -469,6 +475,8 @@ _index.set('DOCK', [
         reach:   { draftClass: 'MEDIUM', fromDockMin: 5 },
       },
     }),
-    label: 'Open water, 5.0m, rock, drop-off edge',
+    label:            'Deep drop-off, 5.0m, rock, drop-off edge',
+    distanceM:        45,   // D-071: 45 m — heavy rod required for this distance
+    rodClassRequired: 'H',  // D-071: heavy or extra-heavy required
   },
 ]);

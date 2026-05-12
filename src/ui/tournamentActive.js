@@ -13,7 +13,11 @@
  * ───────────────────────────────────────────────────────────────────────────
  *
  * TARGET_LOCKED       → "Target locked: [POI name or coordinates]."
- * FISH_FINDER_RESULTS → "Fish finder: [N] candidate(s) in range. [detail]"
+ * TARGET_RETAINED      → "Target retained. Press Spacebar to recast. [recastCount if >0]"
+ * LURE_OPTIONS         → "Tackle box open. Arrow up and down to browse, Spacebar to confirm."
+ * CAST_PHASE_CHANGED   → (LURE_SELECT only) announce the highlighted lure
+ * LURE_LOCKED          → "[Category], tier [N]. Rod armed."
+ * FISH_FINDER_RESULTS  → "Fish finder: [N] candidate(s) in range. [detail]"
  * CAST_LANDED         → "Cast landed. Splash: [silent|normal|loud]."
  * CAST_BIRDS_NEST     → "Bird's nest! Reel tangled. [N] seconds locked out."
  * BITE_NIBBLE         → "Nibble detected — get ready!"
@@ -246,6 +250,14 @@ function _fmtAiCatch(payload) {
 /** @type {Array<() => void>} */
 let _unsubs = [];
 
+/**
+ * Lure options list snapshot from the most recent LURE_OPTIONS event (D-072).
+ * Stored here so CAST_PHASE_CHANGED (LURE_SELECT) and LURE_LOCKED handlers can
+ * look up the selected lure's category/tier without importing equipment.js.
+ * @type {Array<{ lureId:string, category:string, tier:number, matchScore:number, sweetWeightOk:boolean }>}
+ */
+let _lureOptions = [];
+
 // ---------------------------------------------------------------------------
 // Individual event handlers
 // Each calls _announce() with a formatted string.
@@ -329,6 +341,81 @@ function _onClockStarted() {
   _announce('Tournament clock started. Good luck!');
 }
 
+// ── D-073 Target Retention ────────────────────────────────────────────────────
+
+/**
+ * TARGET_RETAINED handler (D-073 Camping Loop).
+ * Emitted by castPipeline after CAST_LANDED when a retained target is still active.
+ * recastCount is TTS-only (not a math input — D-073 explicit).
+ *
+ * @param {{ poiId:string, offset:object, candidateId:string, recastCount:number, atMs:number }} payload
+ */
+function _onTargetRetained(payload) {
+  const count = payload?.recastCount ?? 0;
+  const countText = count > 0 ? ` Recast ${count}.` : '';
+  _announce(`Target retained.${countText} Press Spacebar to recast.`);
+}
+
+// ── D-072 Lure Select FSM ────────────────────────────────────────────────────
+
+/**
+ * LURE_OPTIONS handler (D-072).
+ * Snapshot the lure list for later cursor-move and lock announcements,
+ * then announce that the tackle box is open.
+ *
+ * @param {{ lures:Array, recommendedLureId:string, atMs:number }} payload
+ */
+function _onLureOptions(payload) {
+  _lureOptions = Array.isArray(payload?.lures) ? payload.lures : [];
+  _announce('Tackle box open. Arrow up and down to browse, Spacebar to confirm.');
+}
+
+/**
+ * Format a single lure option for TTS.
+ * D-072: categorical only (category + tier + sweetWeightOk) per H-007 rules.
+ *
+ * @param {{ lureId:string, category:string, tier:number, sweetWeightOk:boolean }|undefined} lure
+ * @returns {string}
+ */
+function _fmtLure(lure) {
+  if (!lure) return 'Unknown lure';
+  const cat    = _titleCase(lure.category ?? 'unknown');
+  const tier   = typeof lure.tier === 'number' ? `, tier ${lure.tier}` : '';
+  const weight = lure.sweetWeightOk ? ', weight match' : ', weight mismatch';
+  return `${cat}${tier}${weight}`;
+}
+
+/**
+ * CAST_PHASE_CHANGED handler (D-072 LURE_SELECT cursor movement).
+ * Announces the currently highlighted lure whenever the phase is LURE_SELECT.
+ * Other phase changes are intentionally NOT announced here — the cast itself
+ * is an audio-engine-driven experience; spoken phase names would be intrusive.
+ *
+ * @param {{ cast: { phase:string, selectedLureIdx:number, lureCount:number }|null, atMs:number }} payload
+ */
+function _onCastPhaseChanged(payload) {
+  const cast = payload?.cast;
+  if (!cast || cast.phase !== 'LURE_SELECT') return;
+
+  const idx  = cast.selectedLureIdx ?? 0;
+  const lure = _lureOptions[idx];
+  const pos  = `${idx + 1} of ${cast.lureCount ?? _lureOptions.length}`;
+  _announce(`${_fmtLure(lure)}. ${pos}.`);
+}
+
+/**
+ * LURE_LOCKED handler (D-072).
+ * Emitted by castPipeline when the player confirms a lure in LURE_SELECT.
+ * Announces the chosen lure then confirms the rod is armed.
+ *
+ * @param {{ lureId:string, atMs:number }} payload
+ */
+function _onLureLocked(payload) {
+  const lure = _lureOptions.find(o => o.lureId === payload?.lureId);
+  const name = lure ? _fmtLure(lure) : _titleCase(payload?.lureId ?? 'unknown');
+  _announce(`${name}. Rod armed.`);
+}
+
 /**
  * INPUT_ENTER tap handler — control surface for TOURNAMENT_ACTIVE.
  *
@@ -376,6 +463,8 @@ export const tournamentActiveManifest = {
    * @param {string} _prevMode - typically TOURNAMENT_BRIEFING
    */
   onMount(_nextMode, _prevMode) {
+    _lureOptions = [];
+
     _unsubs = [
       // ── Targeting / casting ──────────────────────────────────────────────
       // NOTE: TARGET_LOCKED is handled by targetSelector.js which emits its own
@@ -384,6 +473,12 @@ export const tournamentActiveManifest = {
       bus.on('FISH_FINDER_BLOCKED',    _onFinderBlocked),
       bus.on('CAST_LANDED',            _onCastLanded),
       bus.on('CAST_BIRDS_NEST',        _onBirdsNest),
+
+      // ── D-073 Target Retention / D-072 Lure Select ──────────────────────
+      bus.on('TARGET_RETAINED',        _onTargetRetained),
+      bus.on('LURE_OPTIONS',           _onLureOptions),
+      bus.on('CAST_PHASE_CHANGED',     _onCastPhaseChanged),
+      bus.on('LURE_LOCKED',            _onLureLocked),
 
       // ── Control surface: raw input → domain actions ─────────────────────
       // §9 boundary: equipment/* never subscribes to INPUT_* directly. This
@@ -421,6 +516,7 @@ export const tournamentActiveManifest = {
    */
   onUnmount(_prevMode, _nextMode) {
     for (const unsub of _unsubs) unsub();
-    _unsubs = [];
+    _unsubs      = [];
+    _lureOptions = [];
   },
 };

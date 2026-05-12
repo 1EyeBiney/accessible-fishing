@@ -57,6 +57,18 @@ import * as bus        from '../core/eventBus.js';
 import * as clock      from '../core/clock.js';
 import * as stateStore from '../core/stateStore.js';
 import * as modeRouter from '../core/modeRouter.js';
+import * as equipment  from '../equipment/equipment.js';
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * D-071 / D-045: 7-step rod power ladder in ascending order.
+ * Used to compare a candidate's rodClassRequired against the strongest rod
+ * the player currently has loaded in activeTackle.
+ */
+const ROD_POWER_ORDER = Object.freeze(['UL', 'L', 'ML', 'M', 'MH', 'H', 'XH']);
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -110,6 +122,44 @@ function _focused() {
 }
 
 /**
+ * D-071: Returns true if no rod in the player's active loadout satisfies the
+ * candidate's rodClassRequired power class, meaning the target is out of range.
+ *
+ * Checks state.tournament.activeTackle.rods (frozen set — H-017a) or falls
+ * back to hub.activeTackle for pre-tournament contexts.
+ *
+ * Returns false if the candidate has no rodClassRequired (unclassified targets
+ * are always reachable to avoid false positives during early dev).
+ *
+ * @param {object} candidate
+ * @returns {boolean}
+ */
+function _isOutOfRange(candidate) {
+  if (!candidate?.rodClassRequired) return false;
+
+  const required = ROD_POWER_ORDER.indexOf(candidate.rodClassRequired);
+  if (required < 0) return false; // unknown class — don’t block
+
+  const state  = stateStore.getState();
+  const rods   = state.tournament?.activeTackle?.rods
+              ?? state.hub?.activeTackle?.rods
+              ?? [];
+
+  if (rods.length === 0) return true; // no rods loaded — nothing can cast this far
+
+  let strongest = -1;
+  for (const entry of rods) {
+    try {
+      const def = equipment.getRod(entry.id);
+      const idx = ROD_POWER_ORDER.indexOf(def.power);
+      if (idx > strongest) strongest = idx;
+    } catch { /* skip unresolvable rod definitions */ }
+  }
+
+  return strongest < required;
+}
+
+/**
  * Emit SELECTION_CURSOR_MOVED for the currently focused candidate.
  * Allows audio/synthGraph to play the finder ping and TTS to read the label.
  *
@@ -127,7 +177,9 @@ function _announceCurrentCandidate(atMs) {
   });
 
   // TTS read-out for the focused candidate (D-042 accessibility).
-  // Format: "<label>. <coverType>, <depthM>m deep. <idx+1> of <count>."
+  // Format: "<label>. <distanceM> metres. <coverType>, <depthM>m deep. <idx+1> of <count>."
+  // Appends "out of range — re-rig at dock" (D-071 exact text) when the
+  // player has no loaded rod that satisfies rodClassRequired.
   const coverLabel = (candidate.coverType ?? 'Open water')
     .replace(/_/g, ' ')
     .toLowerCase()
@@ -135,10 +187,18 @@ function _announceCurrentCandidate(atMs) {
   const depth = typeof candidate.depthM === 'number'
     ? `${candidate.depthM.toFixed(1)} metres deep`
     : '';
-  const position = `${_cursorIdx + 1} of ${_candidates.length}`;
+  const distance = typeof candidate.distanceM === 'number'
+    ? `${candidate.distanceM} metres`
+    : '';
+  const position  = `${_cursorIdx + 1} of ${_candidates.length}`;
+  const outOfRange = _isOutOfRange(candidate);
+
   const parts = [candidate.label ?? coverLabel];
-  if (depth) parts.push(depth);
+  if (distance) parts.push(distance);
+  if (depth)    parts.push(depth);
   parts.push(position);
+  if (outOfRange) parts.push('out of range \u2014 re-rig at dock');
+
   bus.emit('UI_ANNOUNCE', { text: parts.join('. ') + '.' });
 }
 
@@ -273,6 +333,14 @@ function _onSpacebar(evt) {
   const scanLocked = stateStore.getState().tournament?.scanLocked ?? false;
   if (scanLocked) {
     bus.emit('SELECTION_BLOCKED', { reason: 'SCAN_LOCKED', atMs });
+    return;
+  }
+
+  // D-071: block if no loaded rod can reach this target.
+  if (_isOutOfRange(candidate)) {
+    bus.emit('SELECTION_BLOCKED', { reason: 'OUT_OF_RANGE', atMs });
+    bus.emit('UI_ANNOUNCE', { text: 'Out of range \u2014 re-rig at dock.' });
+    bus.emit('UI_BLIP_ERROR', { atMs }); // audio error cue for audio engine (Phase 8)
     return;
   }
 

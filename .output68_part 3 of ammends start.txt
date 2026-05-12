@@ -1,0 +1,177 @@
+Searched codebase for "SYSTEM OVERRIDE / INTEGRATION ROADMAP: STEP 3 (DISTANCE LIMITS & TTS UI)
+Your Task: Execute Step 3 of the Integration Roadmap
+The FSM now supports dynamic lure selection and target retention. We need to implement the distance vectors on our targets, enforce range limits, and wire up the UI Announcer to speak the new FSM events out loud.
+Implement the following architectural changes:
+**`src/world/structureIndex.js` (Distance Vectors):**
+- Update the mock candidates in the `'DOCK'` POI to include a `distanceM` (distance in meters) property. (e.g., Dock Pilings: 10, Shallow Weedbed: 25, Deep Drop-off: 45).
+**`src/casting/targetSelector.js` (Distance UI Enforcement):**
+- When formatting the candidate for the screen reader (`UI_ANNOUNCE`), include the distance (e.g., "Dock Pilings, 10 meters").
+- When a target is highlighted, check the player's available rods in the state store (e.g., `state.tournament.activeTackle.rods` or equivalent) to see if they own a rod with a `maxDistanceM` (or an equivalent range metric) greater than or equal to the target's `distanceM`.
+- If they do NOT own a capable rod, append "Target out of range" to the `UI_ANNOUNCE` string, and aggressively block the Spacebar dispatch (`TARGET_LOCKED`) for that target. Play a UI error blip instead.
+- *(Note: The actual rod auto-equipping is already handled perfectly by `castPipeline.js`, so you only need to handle the blocking and UI announcements here).*
+**`src/ui/tournamentActive.js` (The New Announcer Listeners):**
+- Add bus listeners for the new events emitted by `castPipeline.js`.
+- `TARGET_RETAINED`: Announce "Target retained. Press spacebar to recast." (Include the recast count if available in the payload).
+- `LURE_OPTIONS`: Announce "Tackle box open. Use Up and Down to select, Space to confirm."
+- `LURE_CURSOR_MOVED`: Announce the name of the currently highlighted lure.
+- `LURE_LOCKED`: Announce "[Lure Name] equipped. Rod armed."
+Provide the fully updated, unabbreviated files for src/world/structureIndex.js, src/casting/targetSelector.js, and src/ui/tournamentActive.js.", 24 results. Files: c:\nbs\afish\.changelog.md, c:\nbs\afish\.changelog.md, c:\nbs\afish\.output58_volume increase target announcements in sonar.txt, c:\nbs\afish\.output60_v1.14.7 UX fixes and such.txt, c:\nbs\afish\.output62O_evaluation of camping a spot, auto equip rods, ammendments.txt, c:\nbs\afish\.output64_part 2 start, stuck maybe.txt, c:\nbs\afish\.output64_part 2 start, stuck maybe.txt, c:\nbs\afish\.output65_part 2, after stage 2, stuck again.txt, c:\nbs\afish\.output66_part 2, token limit 3rd time.txt, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\equipment\fishFinder.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\tournament\competitorAI.js, c:\nbs\afish\src\ui\tournamentActive.js, c:\nbs\afish\src\ui\tournamentResults.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js
+Thinking: Let me read all three files before making any changes, and also re-check the brief for the relevant decisions.
+Key things I know from the brief:
+- D-041: targetSelector.js consumes FISH_FINDER_RESULTS, emits TARGET_LOCKED. It's a menu-FSM.
+- D-071: `FISH_FINDER_RESULTS` candidate payload extended with `distanceM` and `rodClassRequired` (UL..XH). `targetSelector.js` greys/skips candidates whose `rodClassRequired` exceeds the strongest rod present in `state.tournament.activeTackle.rods` (announce: "out of range — re-rig at dock"). No direct imports from casting/* (H-014).
+- H-014: fishFinder and casting communicate only through state.tournament.scanLocked + TARGET_LOCKED and FISH_FINDER_RESULTS events, no direct imports allowed.
+- H-020: targetSelector.js stays target-only and doesn't own LURE_SELECT.
+I'm spotting a mismatch: the request mentions `maxDistanceM` on rods, but D-044's rod schema doesn't have that field. The brief actually uses `rodClassRequired` (UL..XH enum) on the candidate, and targetSelector checks if the strongest rod in activeTackle can handle it—there's no `maxDistanceM` involved.
+Also, `LURE_CURSOR_MOVED` isn't in the brief. The casting pipeline sends `CAST_PHASE_CHANGED` with LURE_SELECT phase and `selectedLureIdx`, so the UI should listen to that instead.
+And targetSelector needs to use the exact D-071 wording: "out of range — re-rig at dock" rather than "Target out of range."
+Let me check the actual files to verify.
+Let me read all three files and flag brief conflicts before writing anything.
+Read structureIndex.js, lines 1 to 120
+Read targetSelector.js, lines 1 to 120
+Read targetSelector.js, lines 120 to 300
+Read structureIndex.js, lines 120 to 280
+Read structureIndex.js, lines 280 to 400
+Read targetSelector.js, lines 300 to 339
+Read structureIndex.js, lines 400 to 475
+Read tournamentActive.js, lines 1 to 200
+Read tournamentActive.js, lines 200 to 427
+Thinking: Now I have read all three files completely. Let me flag the conflicts with the brief before writing:
+**Request issue 1: `maxDistanceM` on rods**
+The brief's D-044 rod schema has NO `maxDistanceM` field. The field doesn't exist. D-071 says: "rodClassRequired (UL..XH enum, derived from distanceM via a lake-tuned reach table in equipment.js)". The targetSelector should check `rodClassRequired` against the strongest rod power class in `activeTackle.rods`, not `maxDistanceM`.
+**Request issue 2: "LURE_CURSOR_MOVED" event**
+This event doesn't exist in the brief. The cast pipeline dispatches `CAST_PHASE_CHANGED` with the LURE_SELECT phase and `selectedLureIdx`, so `tournamentActive.js` should listen to that event instead and check for the LURE_SELECT phase to handle cursor movements. to `CAST_PHASE_CHANGED` instead. So the announcer needs to listen for `LURE_OPTIONS` to announce the tackle box opening, then watch `CAST_PHASE_CHANGED` when the phase is `LURE_SELECT` to announce each lure as the cursor moves, then `LURE_LOCKED` for the equipped message, and finally `TARGET_RETAINED` for the camping text. The request asks for `LURE_CURSOR_MOVED` which doesn't actually exist in the codebase, so I'll need to flag that discrepancy while implementing the cursor announcements through the phase change event instead.
+Now for the structural changes, I need to add `distanceM` and `rodClassRequired` to each mock candidate in structureIndex.js. The brief specifies the distances: Dock Pilings at 10m, Shallow Weedbed at 25m, and Deep Drop-off at 45m. For the rod class requirements, I'll need to map these distances to the appropriate enum values based on the reach table logic that equipment.js handles.
+In targetSelector.js, I need to filter out candidates where the required rod class exceeds what the player actually has available, and update the announcement text to include the distance and an "out of range" message if they can't reach it.
+I'm creating a helper to compare the candidate's rod requirement against the strongest rod in the active tackle, then modifying the spacebar handler to block selection and play an error sound if the target is out of reach.
+For tournamentActive.js, I need to add a handler that announces when a target is retained and prompts the player to decide whether to recast.
+Now I'm working through the remaining event handlers: one for opening the tackle box with navigation instructions, another to announce the highlighted lure when entering lure selection mode, and one for when a lure is equipped. The issue is that LURE_LOCKED only gives me the lure ID, so I'd need to import equipment.js to fetch the display name—but that creates a cross-module dependency I should verify is acceptable. The audio boundary in D-021 only restricts audio imports, not UI imports, so the UI can legitimately import equipment.js to resolve lure categories. The LURE_LOCKED event from castPipeline only contains lureId and timestamp, so I need that category data from somewhere—importing equipment.js seems like the right move for a UI module reading game data. Let me reconsider what information the CAST_PHASE_CHANGED event actually provides for the LURE_SELECT phase.
+Actually, I can avoid the import entirely by storing the lure options locally in the UI module when LURE_OPTIONS fires, then using the selectedLureIdx from CAST_PHASE_CHANGED to look up the lure details from that cached list. This keeps the UI module thin and self-contained without cross-folder dependencies. I'll track _lureOptions locally, populate it when LURE_OPTIONS arrives, and use it to resolve lure info when the phase changes to LURE_SELECT.
+For LURE_LOCKED, I'll read the lureId and look it up in my stored options to announce the selection. When TARGET_RETAINED fires, I'll announce the camping message with the recast count. I should also clarify that LURE_CURSOR_MOVED isn't a real event—I'll use CAST_PHASE_CHANGED filtered for the LURE_SELECT phase instead, similar to how SELECTION_CURSOR_MOVED works for the target list.
+Now I'm setting up the rod power hierarchy...
+Defining the rod power order array... I'm finishing the rod lookup logic to find the strongest available rod, then comparing it against the required power class. But I need to verify that targetSelector can actually import equipment.js without violating the coupling rules—H-014 restricts direct imports between fishFinder and casting modules, but targetSelector importing equipment should be fine since it's not the finder itself.
+The real question is whether the rod class data should come from the candidate payload directly or if targetSelector needs to look it up from activeTackle. Since the candidate already has rodClassRequired embedded in it, I just need to fetch the actual rod power from the tackle state and compare them. I need to verify the constraint in H-014 carefully—it only restricts direct communication between fishFinder and casting modules, so importing equipment.js into targetSelector.js should be fine since equipment is a separate concern. Now I'm planning the concrete edits: I'll add the distance and rod class fields to the mock candidates in structureIndex.js and update the schema documentation to reflect these new properties.
+For targetSelector.js, I need to import equipment, define the rod power ordering, add a helper to check if a candidate is out of range, and then update the announcement logic to show distance and flag unreachable targets. The spacebar handler will also need to prevent selection when out of range.
+For tournamentActive.js, I'm adding local state to track available lures, then wiring up handlers for when the target is retained, lure options are displayed, the cast phase changes to lure selection, and when a lure is locked in—making sure to clean up that state on unmount.
+Now examining the _announceCurrentCandidate function...
+Still writing function logic... Building the announcement text...
+Now I'm thinking through how to handle the lure selection in tournamentActive. I need to capture the lure options from the LURE_OPTIONS event, then when the phase switches to LURE_SELECT, I can use the selectedLureIdx to pull the right lure from that stored list and display its name. LURE_LOCKED: find in `_lureOptions` by lureId
+For the announcement of a lure:
+- "Spinnerbait, tier 2. Weight match: yes."
+- Format: `${category} tier ${tier}. ${sweetWeightOk ? 'Weight match' : 'Weight mismatch'}.`
+Actually the D-072 says: "TTS payload is categorical only (category + tier + sweetWeightOk) per H-007 backpressure rules."
+So announce: category (formatted), tier, sweetWeightOk.
+Now I need to figure out the exact edits and write the code. For the `_onCastPhaseChanged` handler in tournamentActive - I need to be careful. CAST_PHASE_CHANGED is already handled via a potential future listener (it's not currently subscribed). The event payload comes from the bus as `{ cast: castObj, atMs }`, where castObj contains the phase, target, selectedLureIdx, and lure details when in LURE_SELECT.
+So when phase is LURE_SELECT, I extract selectedLureIdx and use it to index into _lureOptions to get the lure, then announce it.
+When phase is LURE_LOCKED, I do the same but confirm the selection.
+Let me now write the three file edits.
+Two deviations from the brief in this request that I need to correct before implementing:
+**`maxDistanceM` on rods doesn't exist.** D-044's rod schema has no such field. D-071 says the range check is by
+rodClassRequired (c:\nbs\afish\src\casting\castPipeline.js:697)
+(UL–XH power class) against the strongest rod in
+activeTackle (c:\nbs\afish\src\casting\castPipeline.js:590)
+. That's what I'll implement.
+2. `LURE_CURSOR_MOVED` doesn't exist. Lure cursor movement is already surfaced via CAST_PHASE_CHANGED with
+cast.phase === 'LURE_SELECT' (c:\nbs\afish\src\casting\castPipeline.js:497)
++
+cast.selectedLureIdx (c:\nbs\afish\src\casting\castPipeline.js:799)
+, which
+castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+emits in each
+_dispatchPhase (c:\nbs\afish\src\casting\castPipeline.js:494)
+call. The UI will subscribe to that.
+Created 3 todos. 3 items: structureIndex.js: add distanceM + rodClassRequired to mock (not-started); targetSelector.js: range check + distance in announce (not-started); tournamentActive.js: wire new FSM event announcements (not-started)
+Starting: structureIndex.js: add distanceM + rodClassRequired to mock (1/3). 3 items: structureIndex.js: add distanceM + rodClassRequired to mock (in-progress); targetSelector.js: range check + distance in announce (not-started); tournamentActive.js: wire new FSM event announcements (not-started)
+Replacing 36 lines with 44 lines in structureIndex.js
+```
+```
+```
+```
+Starting: targetSelector.js: range check + distance in announce (2/3). 3 items: structureIndex.js: add distanceM + rodClassRequired to mock (completed); targetSelector.js: range check + distance in announce (in-progress); tournamentActive.js: wire new FSM event announcements (not-started)
+Replacing 44 lines with 112 lines in targetSelector.js
+```
+```
+```
+```
+Starting: tournamentActive.js: wire new FSM event announcements (3/3). 3 items: structureIndex.js: add distanceM + rodClassRequired to mock (completed); targetSelector.js: range check + distance in announce (completed); tournamentActive.js: wire new FSM event announcements (in-progress)
+Replacing 20 lines with 116 lines in tournamentActive.js
+```
+```
+```
+```
+Checked structureIndex.js, targetSelector.js, tournamentActive.js, no problems found
+Completed: tournamentActive.js: wire new FSM event announcements (3/3). 3 items: structureIndex.js: add distanceM + rodClassRequired to mock (completed); targetSelector.js: range check + distance in announce (completed); tournamentActive.js: wire new FSM event announcements (completed)
+All three files updated with no errors. Here's exactly what was changed and where it diverges from the request:
+**
+src/world/structureIndex.js (/c:/nbs/afish/src/world/structureIndex.js)
+**
+Schema comment extended with
+distanceM (c:\nbs\afish\src\world\structureIndex.js:427)
+and
+rodClassRequired (c:\nbs\afish\src\casting\castPipeline.js:697)
+All three mock candidates updated:
+- Dock pilings →
+distanceM: 10 (c:\nbs\afish\src\world\structureIndex.js:427)
+,
+rodClassRequired: 'UL' (c:\nbs\afish\src\casting\castPipeline.js:697)
+Shallow weed bed →
+distanceM: 25 (c:\nbs\afish\src\world\structureIndex.js:427)
+,
+rodClassRequired: 'ML' (c:\nbs\afish\src\casting\castPipeline.js:697)
+Deep drop-off →
+distanceM: 45 (c:\nbs\afish\src\world\structureIndex.js:427)
+,
+rodClassRequired: 'H' (c:\nbs\afish\src\casting\castPipeline.js:697)
+Labels updated to match new names
+**
+src/casting/targetSelector.js (/c:/nbs/afish/src/casting/targetSelector.js)
+**
+Added
+import * as equipment (c:\nbs\afish\src\equipment\equipment.js:51)
+(needed to resolve rod power classes)
+Added
+ROD_POWER_ORDER (c:\nbs\afish\src\casting\castPipeline.js:700)
+constant (D-045 7-step ladder)
+Added
+_isOutOfRange(candidate) (c:\nbs\afish\src\casting\targetSelector.js:169)
+— walks
+activeTackle.rods (c:\nbs\afish\src\casting\castPipeline.js:706)
+, resolves each rod's
+.power (c:\nbs\afish\src\casting\castPipeline.js:714)
+class via
+equipment.getRod (c:\nbs\afish\src\equipment\equipment.js:1195)
+, compares highest against
+candidate.rodClassRequired (c:\nbs\afish\src\casting\targetSelector.js:137)
+(D-071). Uses power class, not a maxDistanceM field — that field doesn't exist on the rod schema.
+_announceCurrentCandidate (c:\nbs\afish\src\casting\targetSelector.js:168)
+— now includes distance ("X metres") and appends "out of range — re-rig at dock" (D-071 exact text) when applicable
+_onSpacebar (c:\nbs\afish\src\casting\castPipeline.js:1019)
+— blocks with SELECTION_BLOCKED { reason: &#39;OUT_OF_RANGE&#39; } + UI_ANNOUNCE + UI_BLIP_ERROR before any locked candidate is confirmed
+**
+src/ui/tournamentActive.js (/c:/nbs/afish/src/ui/tournamentActive.js)
+**
+Added
+_lureOptions (c:\nbs\afish\src\casting\castPipeline.js:301)
+module state (snapshot of LURE_OPTIONS payload; avoids importing equipment.js in the UI layer)
+_onTargetRetained (c:\nbs\afish\src\ui\tournamentActive.js:353)
+— announces "Target retained. Recast N. Press Spacebar to recast."
+_onLureOptions (c:\nbs\afish\src\ui\tournamentActive.js:368)
+— stores options, announces "Tackle box open. Arrow up and down to browse..."
+_onCastPhaseChanged (c:\nbs\afish\src\ui\tournamentActive.js:396)
+— filters for
+cast.phase === 'LURE_SELECT' (c:\nbs\afish\src\casting\castPipeline.js:497)
+only; announces the focused lure entry using
+_fmtLure (c:\nbs\afish\src\ui\tournamentActive.js:380)
+(category + tier + weight match — D-072/H-007 categorical TTS only). This is the correct hook for cursor movement — `LURE_CURSOR_MOVED` does not exist in the brief; the cursor position is carried in CAST_PHASE_CHANGED with
+selectedLureIdx (c:\nbs\afish\src\casting\castPipeline.js:799)
+.
+_onLureLocked (c:\nbs\afish\src\ui\tournamentActive.js:413)
+— resolves lure from
+_lureOptions (c:\nbs\afish\src\casting\castPipeline.js:301)
+snapshot, announces "[Category, tier N, weight match]. Rod armed."
+All four subscriptions wired in
+onMount (c:\nbs\afish\src\core\modeRouter.js:71)
+, unsubscribed +
+_lureOptions (c:\nbs\afish\src\casting\castPipeline.js:301)
+cleared in
+onUnmount (c:\nbs\afish\src\core\modeRouter.js:72)
