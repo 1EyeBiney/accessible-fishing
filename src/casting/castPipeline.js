@@ -163,8 +163,9 @@ import * as castSpookModel from './castSpookModel.js';
  * Bird's Nest fires if the expected ARROW tap does not arrive within this
  * window (D-015 v1.14). Active only during ARMED, PHASE_2_ACCURACY,
  * and PHASE_4_IMPACT. Spacebar misses do NOT consult this timer.
+ * 2 400 ms = 120% of the 2 000 ms ideal window (legacy Accessible Golf pacing).
  */
-const ARROW_WHIFF_TIMEOUT_MS = 3_000;
+const ARROW_WHIFF_TIMEOUT_MS = 2_400;
 
 /** Minimum Bird's Nest lockout duration in ms (D-015). */
 const BIRDS_NEST_MIN_MS = 10_000;
@@ -182,10 +183,11 @@ const CAST_PHASE_MIN_MS = 2_500;
 const METRONOME_BEAT_COUNT = 4;
 
 /**
- * Ideal Phase-2 reaction time in ms. Tapping ARROW_UP this many ms after
- * the rising pitch sweep starts yields perfect scatter quality.
+ * Ideal Phase-2 reaction time in ms. Tapping ARROW_UP exactly 2 000 ms after
+ * the rising pitch sweep starts yields 100% power/accuracy (legacy Accessible
+ * Golf engine match).  The whiff fires at 2 400 ms (120% overswing).
  */
-const IDEAL_REACTION_MS = 500;
+const IDEAL_REACTION_MS = 2_000;
 
 /**
  * Maximum deviation from IDEAL_REACTION_MS before scatter quality hits 0.
@@ -329,6 +331,9 @@ function _fireBirdNest(atMs) {
 
   // Stop any metronome / pitch sweep activity so audio isn't left running.
   _cancelMetronomeTimers();
+
+  // Kill any active sweep immediately so it doesn't bleed into the lockout.
+  bus.emit('AUDIO_STOP_SWEEP', { atMs });
 
   const nestDurationMs = _getRng().int(BIRDS_NEST_MIN_MS, BIRDS_NEST_MAX_MS);
   const prevPhase      = _phase;
@@ -716,6 +721,8 @@ function _onArrowUp(evt) {
     // ── Tap 3: Lock accuracy, start PHASE_3 metronome ──────────────────────
     case 'PHASE_2_ACCURACY': {
       _cancelWhiff();
+      // Kill the sweep immediately — don't let it ring into PHASE_3.
+      bus.emit('AUDIO_STOP_SWEEP', { atMs });
       _tap3AtMs      = atMs;
       _scatterRadius = _computeScatterRadius();
       _phase         = 'PHASE_3_METRONOME';
@@ -749,6 +756,9 @@ function _onArrowDown(evt) {
   if (_phase !== 'PHASE_4_IMPACT') return;
 
   _cancelWhiff();
+
+  // Kill the sweep immediately — don't let it ring into the splash sound.
+  bus.emit('AUDIO_STOP_SWEEP', { atMs });
 
   // Final mitigation computed here (after both metronomes have run and
   // Spacebar taps, if any, were recorded during PHASE_1 and PHASE_3).

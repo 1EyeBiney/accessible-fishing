@@ -137,6 +137,23 @@ let _scanIntervalId = null;
  */
 let _scanTimeoutId = null;
 
+// ───────────────────────────────────────────────────────────────────────
+// Accessible Golf Sweep State
+// ───────────────────────────────────────────────────────────────────────
+
+/** Active sweep oscillator node; null when no sweep is running. @type {OscillatorNode|null} */
+let _activeSweepOsc = null;
+
+/** Active sweep gain node; null when no sweep is running. @type {GainNode|null} */
+let _activeSweepGain = null;
+
+/**
+ * clock.schedule handles for the marker pips overlaying the active sweep.
+ * All cancelled on AUDIO_STOP_SWEEP.
+ * @type {Array<*>}
+ */
+let _sweepMarkerHandles = [];
+
 /**
  * Collected bus unsubscribe functions, kept for a clean engine teardown path.
  * @type {Array<() => void>}
@@ -1284,39 +1301,122 @@ function _registerBusListeners() {
     osc.stop(now + 0.055);
   }));
 
-  // AUDIO_PITCH_SWEEP — rising (UP) or falling (DOWN) sine sweep over
-  // payload.durationMs.  Covers the full PHASE_2 / PHASE_4 whiff window so
-  // the player can judge the right moment to tap.
-  //   UP   (Phase 2): 200 Hz → 800 Hz — player taps ARROW_UP before the sweep peaks.
-  //   DOWN (Phase 4): 800 Hz → 200 Hz — player taps ARROW_DOWN before it bottoms out.
-  // Gain ramps in over 30 ms and out over the final 80 ms to avoid clicks.
+  // AUDIO_PITCH_SWEEP — legacy Accessible Golf replica sweep.
+  //
+  // UP   (Phase 2, backswing power window):
+  //   220 Hz → 880 Hz over 2.0 s (100% mark), then → 1 760 Hz by 2.4 s (120% overswing).
+  // DOWN (Phase 4, impact power window):
+  //   880 Hz → 220 Hz over 2.0 s.
+  //
+  // Gain overdrive: ramp to 2.0 over 0.1 s (matching legacy clipping intent).
+  //
+  // Marker pips (square wave, independent gain nodes, via clock.schedule so they
+  // are cancellable on AUDIO_STOP_SWEEP):
+  //   25% (500 ms)  : 330 Hz, gain 1.0, 100 ms
+  //   50% (1000 ms) : 440 Hz, gain 1.0, 100 ms
+  //   75% (1500 ms) : 660 Hz, gain 1.0, 100 ms
+  //  100% (2000 ms) : 880 Hz, gain 1.5, 150 ms
+  //  120% (2400 ms) : 1760 Hz, gain 1.5, 200 ms
+  //
+  // Both the main oscillator and all marker handles are stored in module-level
+  // tracking variables so AUDIO_STOP_SWEEP can cut everything instantly.
   _unsubs.push(bus.on('AUDIO_PITCH_SWEEP', (evt) => {
-    const direction  = evt?.direction ?? 'UP';
-    const durationMs = Math.max(100, evt?.durationMs ?? 3_000);
+    const direction = evt?.direction ?? 'UP';
     if (!_IS_BROWSER || !_actx) {
-      _logAudio('cast', 'pitch_sweep', { direction, durationMs, phase: evt?.phase });
+      _logAudio('cast', 'pitch_sweep', { direction, phase: evt?.phase });
       return;
     }
-    const durationSec = durationMs / 1_000;
-    const now  = _actx.currentTime;
+
+    // Defensive: clear any sweep still playing from a previous cast.
+    if (_activeSweepGain) {
+      const t = _actx.currentTime;
+      _activeSweepGain.gain.cancelScheduledValues(t);
+      _activeSweepGain.gain.linearRampToValueAtTime(0, t + 0.05);
+      try { _activeSweepOsc.stop(t + 0.06); } catch (_) { /* already stopped */ }
+      _activeSweepOsc  = null;
+      _activeSweepGain = null;
+    }
+    for (const h of _sweepMarkerHandles) clock.cancel(h);
+    _sweepMarkerHandles = [];
+
+    const now = _actx.currentTime;
+
+    // ── Main sweep oscillator ────────────────────────────────────────────
     const osc  = _actx.createOscillator();
     const gain = _actx.createGain();
     osc.connect(gain);
     gain.connect(_masterGain);
     osc.type = 'sine';
-    const startHz = direction === 'UP' ? 200 : 800;
-    const endHz   = direction === 'UP' ? 800 : 200;
-    osc.frequency.setValueAtTime(startHz, now);
-    osc.frequency.linearRampToValueAtTime(endHz, now + durationSec);
-    // Gain envelope: 30 ms ramp-in, hold, 80 ms ramp-out at the end.
-    const fadeIn  = Math.min(0.03, durationSec * 0.1);
-    const fadeOut = Math.min(0.08, durationSec * 0.1);
+
+    // Overdrive ramp (legacy match: clipping at 2.0).
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.20, now + fadeIn);
-    gain.gain.setValueAtTime(0.20, now + durationSec - fadeOut);
-    gain.gain.linearRampToValueAtTime(0, now + durationSec);
+    gain.gain.linearRampToValueAtTime(2.0, now + 0.1);
+
+    if (direction === 'UP') {
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(880,  now + 2.0);
+      osc.frequency.exponentialRampToValueAtTime(1760, now + 2.4);
+    } else {
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 2.0);
+    }
+
+    const endSec = direction === 'UP' ? 2.4 : 2.0;
     osc.start(now);
-    osc.stop(now + durationSec + 0.01);
+    osc.stop(now + endSec + 0.02);  // backstop; AUDIO_STOP_SWEEP cuts it earlier
+
+    _activeSweepOsc  = osc;
+    _activeSweepGain = gain;
+
+    // ── Marker pips ──────────────────────────────────────────────────
+    const markers = [
+      { delayMs:  500, hz:  330, peakGain: 1.0, durSec: 0.10 },
+      { delayMs: 1000, hz:  440, peakGain: 1.0, durSec: 0.10 },
+      { delayMs: 1500, hz:  660, peakGain: 1.0, durSec: 0.10 },
+      { delayMs: 2000, hz:  880, peakGain: 1.5, durSec: 0.15 },
+      { delayMs: 2400, hz: 1760, peakGain: 1.5, durSec: 0.20 },
+    ];
+
+    for (const m of markers) {
+      const h = clock.schedule(m.delayMs, (firedAtMs) => {
+        if (!_IS_BROWSER || !_actx) return;
+        const t      = _actx.currentTime;
+        const pipOsc  = _actx.createOscillator();
+        const pipGain = _actx.createGain();
+        pipOsc.connect(pipGain);
+        pipGain.connect(_masterGain);
+        pipOsc.type = 'square';
+        pipOsc.frequency.value = m.hz;
+        pipGain.gain.setValueAtTime(m.peakGain, t);
+        pipGain.gain.exponentialRampToValueAtTime(0.001, t + m.durSec);
+        pipOsc.start(t);
+        pipOsc.stop(t + m.durSec + 0.01);
+      });
+      _sweepMarkerHandles.push(h);
+    }
+  }));
+
+  // AUDIO_STOP_SWEEP — hard kill for the active sweep + all pending markers.
+  // Emitted by castPipeline on Tap 3 (PHASE_2 → PHASE_3), Tap 5 (splashdown),
+  // and _fireBirdNest so no sweep audio bleeds into the next phase.
+  _unsubs.push(bus.on('AUDIO_STOP_SWEEP', () => {
+    // Cancel all pending marker pips via the game clock.
+    for (const h of _sweepMarkerHandles) clock.cancel(h);
+    _sweepMarkerHandles = [];
+
+    if (!_activeSweepGain || !_IS_BROWSER || !_actx) {
+      _activeSweepOsc  = null;
+      _activeSweepGain = null;
+      return;
+    }
+
+    const t = _actx.currentTime;
+    _activeSweepGain.gain.cancelScheduledValues(t);
+    _activeSweepGain.gain.linearRampToValueAtTime(0, t + 0.05);
+    try { _activeSweepOsc.stop(t + 0.06); } catch (_) { /* already stopped */ }
+    _activeSweepOsc  = null;
+    _activeSweepGain = null;
+    _logAudio('cast', 'sweep_stopped', {});
   }));
 
   _unsubs.push(bus.on('CAST_BIRDS_NEST', () => {
