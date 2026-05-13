@@ -1,0 +1,44 @@
+Thinking: Let me read the browserAdapter.js file to understand the current structure before making changes.
+Read browserAdapter.js, lines 1 to 220
+Read browserAdapter.js, lines 220 to 290
+Read browserAdapter.js, lines 290 to 321
+Now I have the full picture. The change is small — parse URLSearchParams before calling
+boot() (c:\nbs\afish\src\engine.js:267)
+:
+Replacing 4 lines with 8 lines in browserAdapter.js
+```
+```
+```
+```
+Now add the v1.86 changelog entry:
+Replacing 1 lines with 8 lines in .changelog.md
+```
+```
+```
+```
+Here's the full updated
+_handleStartClick (c:\nbs\afish\src\browserAdapter.js:258)
+region for verification:
+Read browserAdapter.js, lines 255 to 295
+Done. The change is minimal and surgical:
+`new URLSearchParams(window.location.search).get('dev') === '1'` — reads the flag without touching
+location.href (c:\BCI\VSCode-win32-x64-1.116.0\560a9dba96\resources\app\extensions\node_modules\typescript\lib\lib.dom.d.ts:5487)
+directly (safe; no URL mutation, no redirect risk)
+Result is stored in
+_isDev (c:\nbs\afish\src\browserAdapter.js:284)
+and passed as
+{ silent: false, dev: _isDev } (c:\nbs\afish\src\engine.js:264)
+to
+boot() (c:\nbs\afish\src\engine.js:267)
+-
+engine.js (/c:/nbs/afish/src/engine.js)
+already passes
+opts?.dev === true (c:\nbs\afish\src\engine.js:164)
+to
+diagnostics.init() (c:\nbs\afish\src\dev\diagnostics.js:231)
+, so the whole chain is now wired
+Loading
+index.html (/c:/nbs/afish/index.html)
+(no flag) →
+_isDev = false (c:\nbs\afish\src\browserAdapter.js:284)
+→ diagnostics dormant as required

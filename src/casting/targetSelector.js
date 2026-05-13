@@ -355,13 +355,24 @@ function _onSpacebar(evt) {
 
   // D-041, D-011: emit TARGET_LOCKED — the new Tap-1 anchoring trigger.
   // castPipeline samples the wind vector at this moment (D-012).
-  bus.emit('TARGET_LOCKED', {
+  //
+  // Build the payload once so both the permanent ledger (stateStore) and the
+  // bus observers receive the identical object — no risk of shape divergence.
+  const lockPayload = {
     poiId:       _poiId,
     offset:      candidate.offset,      // POI-frame { dx, dy } from structureIndex
     candidateId: candidate.id,
     lockedAtMs:  atMs,
     finderTier:  _finderTier,
-  });
+  };
+
+  // D-073: commit to the permanent ledger BEFORE broadcasting so that any
+  // synchronous bus subscriber reading state.tournament.lastTarget (e.g.
+  // castPipeline D-073 retained-target check, diagnostics F2) observes the
+  // freshly locked target rather than the stale null value.
+  stateStore.dispatch({ type: 'TARGET_LOCKED', payload: lockPayload });
+
+  bus.emit('TARGET_LOCKED', lockPayload);
 }
 
 // ---------------------------------------------------------------------------

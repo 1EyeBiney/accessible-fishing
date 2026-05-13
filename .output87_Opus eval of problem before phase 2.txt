@@ -1,0 +1,155 @@
+Thinking: I need to look at the relevant files to properly evaluate the architecture they're asking about.
+Searched for regex TARGET_LOCKED|stateStore|dispatch (**/src/casting/targetSelector.js), 15 results. Files: c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js, c:\nbs\afish\src\casting\targetSelector.js
+Searched for regex TARGET_LOCKED|lastTarget|dispatch|reduce (**/src/core/stateStore.js), 20 results. Files: c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js
+Searched for regex stateStore\.dispatch|dispatch\(\{ (**/src/**/*.js), 20 results. Files: c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\core\modeRouter.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js
+Read targetSelector.js, lines 1 to 80
+Thinking: I need to verify that targetSelector.js is importing stateStore correctly, then check whether the confirm handler is properly wired up and if there's a TARGET_LOCKED reducer defined in the store.
+Read targetSelector.js, lines 310 to 385
+Searched for regex registerReducer\( (**/src/core/stateStore.js), 20 results. Files: c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js
+Searched for regex lastTarget|TARGET_LOCKED (**/src/casting/castPipeline.js), 20 results. Files: c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Read stateStore.js, lines 325 to 345
+Thinking: The `TARGET_LOCKED` reducer is already in place in stateStore, and targetSelector.js imports it but only fires the bus event without dispatching the action. I'm checking the architectural rules—H-003 doesn't apply here since this is tournament state, not tile state, and H-014 about cross-imports between casting modules needs verification.
+Looking at the stateStore comment about mode writes, that's mode-specific and doesn't restrict other modules from dispatching their own actions. The real issue is clear: the `TARGET_LOCKED` reducer exists as the canonical writer for lastTarget, but nothing is actually dispatching it. Gemini's diagnosis and fix are correct.
+Architectural Ruling — v1.87
+1. Diagnosis: CONFIRMED ✅
+Verified against the codebase:
+-
+stateStore.js (/c:/nbs/afish/src/core/stateStore.js)
+line 330 already registers a TARGET_LOCKED reducer that writes
+state.tournament.lastTarget = payload (c:\nbs\afish\src\casting\targetSelector.js:143)
+. The comment block explicitly names this as the canonical D-073 writer.
+A workspace-wide search for
+stateStore.dispatch({ type: 'TARGET_LOCKED' (c:\nbs\afish\src\casting\castPipeline.js:200)
+returns zero hits. The reducer is registered but never invoked —
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1102)
+is permanently null.
+targetSelector.js (/c:/nbs/afish/src/casting/targetSelector.js)
+_onSpacebar (c:\nbs\afish\src\casting\targetSelector.js:320)
+(lines ~313–365) emits
+bus.emit('TARGET_LOCKED', …) (c:\nbs\afish\src\browserAdapter.js:44)
+but does not call
+stateStore.dispatch (c:\nbs\afish\src\casting\castPipeline.js:200)
+. This is exactly the desync Gemini described.
+Downstream consumers —
+castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+lines 1102 and 1141 — read
+stateStore.getState().tournament?.lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1102)
+for the D-073 retained-target path and for F2 X-Ray resolution. With
+lastTarget === null (c:\nbs\afish\src\casting\castPipeline.js:1102)
+, both correctly fall through to the "no target" branch. Symptoms match.
+Diagnosis is accurate; no other emitter is missing.
+2. Invariant Audit: CLEAN ✅
+Invariant Verdict Reason
+H-003 (sole writer of
+tile.state.spook (c:\nbs\afish\src\casting\castSpookModel.js:94)
+) | N/A | The write target is
+state.tournament.lastTarget (c:\nbs\afish\src\casting\targetSelector.js:143)
+, not tile state. |
+| H-014 (no cross-imports between casting/* modules) | Not violated |
+stateStore (c:\nbs\afish\src\casting\castPipeline.js:200)
+lives in core/, not casting/.
+targetSelector.js (/c:/nbs/afish/src/casting/targetSelector.js)
+already imports it (used at line 143 / 333 for
+scanLocked (c:\nbs\afish\src\casting\targetSelector.js:333)
+reads). |
+| H-005 (no stray listeners) | Not affected |
+dispatch (c:\nbs\afish\src\core\stateStore.js:490)
+is a synchronous call, not a subscription. |
+| **stateStore "single writer of
+state.mode (c:\nbs\afish\src\casting\targetSelector.js:143)
+" rule** | Not violated | That rule scopes only
+state.mode (c:\nbs\afish\src\casting\targetSelector.js:143)
+to
+modeRouter (c:\nbs\afish\src\casting\targetSelector.js:59)
+. The TARGET_LOCKED reducer was explicitly authored for targetSelector to call — peer modules (
+equipment.js (/c:/nbs/afish/src/equipment/equipment.js)
+,
+castPipeline.js (/c:/nbs/afish/src/casting/castPipeline.js)
+,
+fightLoop.js (/c:/nbs/afish/src/fish/fightLoop.js)
+,
+motor.js (/c:/nbs/afish/src/navigation/motor.js)
+) already dispatch their own domain actions following the same pattern. |
+| Reducer purity | Preserved | The existing TARGET_LOCKED reducer is pure
+(state, payload) => newState (c:\nbs\afish\src\casting\targetSelector.js:143)
+. |
+| Ordering | Safe | Dispatch must occur before
+bus.emit('TARGET_LOCKED', …) (c:\nbs\afish\src\browserAdapter.js:44)
+so any synchronous subscriber that reads
+state.tournament.lastTarget (c:\nbs\afish\src\casting\targetSelector.js:143)
+(e.g. future D-073 work, current F2 if pressed inside a handler) sees the committed value. |
+No new architectural debt. This is filling in a planned-but-unwired path, not introducing a new convention.
+3. Ruling: APPROVED — proceed with v1.87 hotfix
+Execution requirements for Sonnet
+**File:
+targetSelector.js (/c:/nbs/afish/src/casting/targetSelector.js)
+—
+_onSpacebar (c:\nbs\afish\src\casting\targetSelector.js:320)
+**
+Insert exactly one
+stateStore.dispatch (c:\nbs\afish\src\casting\castPipeline.js:200)
+call immediately before the existing
+bus.emit('TARGET_LOCKED', …) (c:\nbs\afish\src\browserAdapter.js:44)
+block. The payload object must be constructed once and reused for both calls to guarantee bus subscribers and state readers observe an identical snapshot.
+```
+// Build the lock payload once so dispatch + bus see the same object.
+const lockPayload = {
+  poiId:       _poiId,
+  offset:      candidate.offset,
+  candidateId: candidate.id,
+  lockedAtMs:  atMs,
+  finderTier:  _finderTier,
+};
+// D-073: commit to the permanent ledger BEFORE broadcasting so any
+// synchronous bus subscriber that reads state.tournament.lastTarget
+// (castPipeline D-073 retained-target check, diagnostics F2) sees
+// the freshly locked target rather than the stale value.
+stateStore.dispatch({ type: 'TARGET_LOCKED', payload: lockPayload });
+// D-041, D-011: emit TARGET_LOCKED — the Tap-1 anchoring trigger.
+bus.emit('TARGET_LOCKED', lockPayload);
+```
+Constraints:
+Do NOT change the payload shape — the reducer at
+stateStore.js:330 (c:\nbs\afish\src\casting\castPipeline.js:200)
+stores it verbatim, and castPipeline.js:1102, 1141 reads
+poiId (c:\nbs\afish\src\casting\targetSelector.js:215)
+,
+offset (c:\nbs\afish\src\casting\targetSelector.js:360)
+,
+candidateId (c:\nbs\afish\src\casting\targetSelector.js:361)
+,
+lockedAtMs (c:\nbs\afish\src\casting\targetSelector.js:362)
+,
+finderTier (c:\nbs\afish\src\casting\targetSelector.js:363)
+directly off
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1102)
+. Shape must remain
+{ poiId, offset, candidateId, lockedAtMs, finderTier } (c:\nbs\afish\src\casting\targetSelector.js:363)
+.
+Do NOT add `recastCount` to the payload at lock time — the stateStore comment at line 329 explicitly states "recastCount is NOT stored here". `castPipeline` owns that field's lifecycle.
+Dispatch MUST come before emit (ordering invariant noted above).
+No other file should change. The reducer, the bus subscribers, and the downstream consumers are already correctly wired and just need
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1102)
+to actually be populated.
+**File:
+.changelog.md (/c:/nbs/afish/.changelog.md)
+**
+Prepend a ## v1.87 — Target Lock State Bridge entry documenting:
+Symptom: F2 announces "No target locked"; D-073 retained-target prompt never plays after splashdown.
+Root cause:
+targetSelector._onSpacebar (c:\nbs\afish\src\casting\targetSelector.js:320)
+emitted TARGET_LOCKED on the bus but never dispatched the matching action to
+stateStore (c:\nbs\afish\src\casting\castPipeline.js:200)
+, so the pre-existing TARGET_LOCKED reducer (stateStore.js:330) never ran and
+state.tournament.lastTarget (c:\nbs\afish\src\casting\targetSelector.js:143)
+stayed null.
+Fix: single-line addition of
+stateStore.dispatch({ type: 'TARGET_LOCKED', payload }) (c:\nbs\afish\src\casting\castPipeline.js:556)
+immediately before the bus emit; payload reused so both paths observe identical data.
+Invariants verified clean: H-003 N/A, H-014 unaffected (stateStore is in `core/`), modeRouter mode-write rule scoped to
+state.mode (c:\nbs\afish\src\casting\targetSelector.js:143)
+only.
+Verification gate: After the edit, run node tests/harness.js. The Section 9 — Target Selection block must still pass 9f. SELECTION_CLOSED reason is CONFIRMED and 9f. TARGET_LOCKED emitted on SPACEBAR confirmation. Any pre-existing failures in that section (the null payload TypeError on harness.js:1528) should resolve themselves once
+lastTarget (c:\nbs\afish\src\casting\castPipeline.js:1102)
+is populated — confirm before declaring the hotfix complete.
+Cleared for execution.
