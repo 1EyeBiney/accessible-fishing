@@ -1,0 +1,238 @@
+Read eventBus.js, lines 100 to 134
+Thinking: The user wants me to continue from where I left off. Let me check the current state of the file to see exactly what's there and what needs to be added/fixed.
+First, let me see the current end of the file:
+Read phase1.test.js, lines 580 to 680
+Read phase1.test.js, lines 680 to 728
+Thinking: The file is complete. The issue is `bus._reset is not a function` because `eventBus.js` only exports `on`, `off`, `emit`, `listenerCount`, `totalListenerCount`, `debugSnapshot`. There's no `_reset` function.
+I need to fix the `resetAll()` function to not call `bus._reset()`. Instead, I need a different approach to clear all bus subscriptions.
+Looking at the bus API, there's no `_reset()` method. The harness.js references it in resetAll(), but maybe harness.js is wrong/outdated, or maybe there's a different version of eventBus.js.
+I'm realizing I may have confused which file I was looking at earlier. Let me check harness.js directly to see how it actually handles clearing bus subscriptions, since that's where the `_reset()` call is coming from.
+Searched for text bus._reset\|bus.reset\|resetAll (**/tests/harness.js), no results
+Searched for text resetAll (**/tests/harness.js), 13 results. Files: c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js
+Read harness.js, lines 155 to 200
+Thinking: Now I see: `resetAll()` in harness.js does NOT call `bus._reset()`. There's no such method on the bus. The harness relies on the mounted subsystems properly cleaning up their subscriptions via onUnmount(). That's what the H-005 test verifies.
+So my `resetAll()` function should NOT call `bus._reset()`. I need to remove that call. The bus subscriptions are cleared when:
+1. `transitionTo(MODES.HUB)` is called (triggers onUnmount for TOURNAMENT_ACTIVE manifests)
+2. Each subsystem's onUnmount() calls its unsub functions
+3. Then `stateStore._reset()` and `clock.reset()` are called to clear state
+I notice harness.js doesn't call `inputAdapter._reset()` in `resetAll()` — only in `resetForCasting()` — but including it in mine should be fine. Let me update my implementation to match this pattern more closely. is through `onUnmount()`, so calling `stateStore._reset()` after `transitionTo(HUB)` handles the cleanup properly. The test subscriptions I set up with `bus.on()` are manually managed with their unsubscribe functions, so they won't leak between test sections. For my `resetAll()`, I need to drop the `bus._reset()` call and check the mode directly against `stateStore.getState().mode === MODES.TOURNAMENT_ACTIVE`.
+The real concern is whether subscriptions from the fight loop persist—the tick handler and pump listener. Those get cleaned up when `fightLoop.onUnmount()` runs during the transition to HUB, so that's covered. In Section 2, I'm in tournament mode using castPipeline but not actually running fights, so when I call `resetAll()` at the start of Section 3, I need to verify the mode check works correctly to ensure everything's properly reset. onUnmount() runs to clear any remaining subscriptions, then stateStore._reset() sets the mode back to BOOT and clock.reset() resets the timer. This is the correct cleanup sequence.
+Now I need to fix two things: remove the `bus._reset()` call from `resetAll()` since it's causing the issue, and verify that the mode check is using the right function. `currentMode()` should work fine since it reads directly from stateStore, but I want to make sure it's consistent with how I'm checking the state elsewhere.
+Actually, I'm noticing that `runFightRun()` in Section 1 has its own inline reset logic that also calls `bus._reset()`, so I need to fix that too when I make the changes.
+The bus has no
+_reset() (c:\nbs\afish\src\core\stateStore.js:547)
+— subscriptions are cleaned up via
+onUnmount (c:\nbs\afish\src\casting\castPipeline.js:1392)
+. I need to remove
+bus._reset() (c:\nbs\afish\src\core\eventBus.js:21)
+from both
+resetAll() (c:\nbs\afish\tests\harness.js:165)
+and from the inline reset inside
+runFightRun() (c:\nbs\afish\tests\phase1.test.js:270)
+:
+Replacing 23 lines with 22 lines in phase1.test.js
+```
+```
+```
+```
+Running node tests/phase1.test.js. node tests/phase1.test.js
+Thinking: 33/34 pass. The only failure is:
+```
+[FAIL] 2d. Power Rip increments spook by +1 NORMAL (before: 0, after: 0)
+```
+This means the spook isn't being written. The issue is that `castSpookModel.applySplash()` requires the tile to exist in worldMap. Let me check if the tile at `{x:0, y:0}` is registered when Power Rip fires.
+Let me trace through what happens:
+1. `buildTestWorld()` registers tile at `{x:0, y:0}` ✓
+2. `armCastPipeline()` emits TARGET_LOCKED with the POI ID and zero offset, which sets the target to that POI's center coordinate at `{x:0, y:0}`
+3. `_getTargetAbsCoord()` resolves this to the absolute coordinate `{x:0, y:0}`, then `castSpookModel` should apply the splash effect there
+4. Looking at what `applySplash` does — it retrieves the splash increment for the kind (NORMAL gives 1), then tries to fetch the tile at that coordinate, but if the tile doesn't exist it returns early without doing anything
+. Now I'm walking through the subsequent calls: after the first Soft Retrieve resets everything to idle, the next `armCastPipeline()` call re-establishes the target, then another Soft Retrieve clears it again. By the third `armCastPipeline()` call, the target gets set once more, and when `_onInputQ` fires, the phase is ARMED and `_getTargetAbsCoord()` should successfully retrieve the spook coordinate.
+After applying the splash effect at that coordinate and resetting to idle, I'm advancing the clock by 2 seconds. Then in the next cycle, I'm re-arming the pipeline and trying to read the spook state at that same coordinate—but I'm realizing the spook was already applied in the previous step, so by the time I read it, the state might already reflect that application rather than being fresh.
+The test expects the spook to increment by 1, but it's showing 0 before and after, which suggests the spook isn't being written at all. Let me reconsider the flow: after the input is emitted and the phase resets to idle with the target cleared, the clock advances 2 seconds. That's not enough time for spook decay to kick in since decay happens over 12 seconds per level, so the spook value should persist if it was written.
+The real issue might be with how the tile coordinate is being passed or retrieved. I need to check whether `worldMap.getTile()` is receiving the coordinate in the right format—whether it's an object like `{x:0, y:0}` or a string like `"0,0"`. So `worldMap.getTile` can accept either an object with x and y properties or a string key. The tile might be stored under a specific key format internally, and when I register a tile with `registerTile`, it gets stored with that key. When `applySplash` tries to look it up using the coordinate object, it needs to match how the tile was originally keyed. Let me trace through `worldMap.getTile` to see how it actually performs the lookup.
+One failure: test 2d (Power Rip spook). Let me diagnose — the spook write isn't landing. Let me check
+worldMap.getTile (c:\nbs\afish\tests\harness.js:55)
+:
+Searched for text getTile\|mutateTileState\|_coordKey (**/src/world/worldMap.js), no results
+Read worldMap.js, lines 1 to 80
+Searched for text function getTile (**/src/world/worldMap.js), 1 result. Files: c:\nbs\afish\src\world\worldMap.js
+Read worldMap.js, lines 372 to 410
+Searched for text _resolveCoord\|mutateTileState (**/src/world/worldMap.js), no results
+Searched for text resolveCoord (**/src/world/worldMap.js), 4 results. Files: c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js
+Read worldMap.js, lines 101 to 135
+Thinking: So `worldMap.getTile({x:0, y:0})` should work fine - it converts `{x:0, y:0}` to the string key `"0,0"` using `coordKey(0, 0)`.
+The tile is registered at `{x:0, y:0}` via `worldMap.registerTile({ coord: { x: 0, y: 0 }, ... })` which stores it under key `"0,0"`.
+And `castSpookModel.applySplash({x:0, y:0}, 'NORMAL', atMs)` calls `worldMap.getTile({x:0, y:0})` which resolves to key `"0,0"`. So it should find the tile.
+Let me trace through `applySplash` more carefully to see where the spook isn't getting written.
+Read castSpookModel.js, lines 115 to 161
+Thinking: OK so `applySplash` works correctly if the tile exists. It uses `worldMap.mutateTileState(coord, ...)` to write to the tile. Let me check if `mutateTileState` exists in worldMap:
+Read worldMap.js, lines 445 to 475
+Thinking: `mutateTileState` throws if no tile at that coord. But `applySplash` would be crashing on that call... wait no, `applySplash` calls `worldMap.getTile(coord)` first, checks `if (!tile) return;` — if tile exists, it calls `mutateTileState`.
+But wait - why is the tile not found? Let me think again:
+1. `buildTestWorld()` registers tile at `{x:0, y:0}` with key `"0,0"`
+2. Then `transitionTo(MODES.TOURNAMENT_ACTIVE)` → `clock.reset()` + `clock.start()`. Does this clear worldMap? No, worldMap is separate from the clock.
+3. `armCastPipeline()` sets up TARGET_LOCKED with `poiId: TEST_POI_ID` and zero offset
+4. When Power Rip fires, `_getTargetAbsCoord()` resolves the target POI — it checks the player's current POI first (which is null since we haven't navigated), then falls back to `_target?.poiId` which is TEST_POI_ID, and retrieves that POI from the graph to get its center coordinate at `{x:0, y:0}`
+5. `applySplash()` is called with those coordinates, finds the tile, and should mutate it to write the spook value
+6. But the test shows spook remains 0 before and after — wait, I need to look back at Section 2 more carefully because Power Rip already applied spook to that tile in step 2c, then we called `armCastPipeline()` in 2d
+Now I'm checking whether the castPipeline's `_onTargetLocked` function actually fires after `_resetToIdle()` dispatches `SCAN_UNLOCKED`. The phase should be 'IDLE' at that point, so the guard check should pass. But I need to verify if `_onTargetLocked` also has its own scan lock validation...
+Checking the function definition... Checking the `_getPoiCenter()` function to see if it's returning null — it reads `currentPoiId` from the state store, and after `resetAll()` is called during mode transition, that initial value is null, which would explain why the coordinate lookup is failing. After Power Rip ends the section, `_resetToIdle()` clears the phase and target, then the clock advances 2 seconds. When section 2d starts with `armCastPipeline()` again, TARGET_LOCKED resets the target back to the test POI, and after the spacebar input triggers ARMED, the Q input fires `_onInputQ` while in ARMED phase, which calls `_getTargetAbsCoord()` to retrieve the target coordinates.
+Now I'm checking whether the world tile at `{x:0, y:0}` is still registered for this test — since `resetAll()` clears the map during Section 2 setup but then `buildTestWorld()` registers the tile, and none of the subsequent tests reset the world again, the tile should persist through test 2d unless something else is clearing it. Continuing through the remaining test cases—2c runs Power Rip from the ARMED state, and 2d checks that spook increments properly after Power Rip. The key insight is that no `resetAll()` happens between these tests, so the tile persists throughout Section 2. Now I'm wondering if Power Rip's splash application in 2c might also be triggering spook increments, which could be throwing off my expectations.
+Let me trace through the spook values: after 2c's Power Rip, spook should be 1. Then with a 2000ms clock tick and a 12000ms decay window, spook should still be 1 when 2d starts. So `spookBefore = 1`, and 2d's Power Rip should push it to 2, making the assertion `2 === 1 + 1` pass. But the test output is showing `before: 0, after: 0`, which suggests neither Power Rip is actually incrementing spook at all.
+I'm wondering if `worldMap.getTile({x:0, y:0})` is returning null, or if there's an error being silently caught in `applySplash`. Let me check the error handling—`applySplash` calls `getTile` first, then `mutateTileState`, but it only wraps `getTile` in a try-catch. If `mutateTileState` throws an error, it would propagate up...
+Examining the applySplash logic...
+Actually, I see the issue now. The `mutateTileState` call isn't wrapped in a try-catch, so if it throws because the tile doesn't exist, that error would bubble up through `_onInputQ` which also has no error handling. So the error should be visible, not silently failing.
+Let me trace through `_getTargetAbsCoord` more carefully to understand what coordinate is actually being passed to `applySplash`. So the issue is that `_getPoiCenter()` wraps everything in a try-catch, and if `poiGraph.getPoi()` fails because the POI doesn't exist, it silently returns null without any visible error. This means `_getTargetAbsCoord()` returns null, the splash effect never gets applied, and there's no indication anything went wrong. I should check if `buildTestWorld()` is registering the POI with all the required fields that `getPoi()` expects. I'm checking whether `currentPoiId` gets properly reset to null or some default value after calling `stateStore._reset()`, since that could affect the fallback logic in `_getPoiCenter()`. Let me trace through what the initial state looks like for the session player object. but maybe it's returning a POI without the `centerCoord` property. Let me check what `castSpookModel.applySplash` actually receives when the INPUT_Q event fires. I've got a SPOOK_APPLIED listener set up in my 2d test...
+Setting up a listener...
+Emitting INPUT_Q and then checking if the spook count incremented. The test is failing with both before and after at 0, and I'm not seeing any SPOOK_APPLIED events fire. The listener is there for debugging, but the real issue is that the spook value isn't changing at all.
+Looking back at section 2c, I ran Power Rip there too and recorded the spook value before that action. If 2c had successfully applied spook, then 2d's `spookBefore` should be 1, not 0. But it's still 0, which means 2c's Power Rip also failed to apply spook. The pattern is consistent across both tests. CAST_ABORTED is firing properly, so the cast pipeline is executing, but the spook application isn't happening.
+Let me trace through the `_onInputQ` function to see what's going on. It checks the current phase and determines a target coordinate for the spook effect, then calls `applySplash` if a valid coordinate exists.
+The issue is that when `spookCoord` ends up null, the `applySplash` call never happens, and instead the function continues to emit `CAST_ABORTED`. So I need to figure out why `_getTargetAbsCoord()` is returning null in the first place.
+Looking at `_getPoiCenter()`, it retrieves a POI object and returns its `centerCoord` property, or null if that property doesn't exist. If the POI object exists but is missing the `centerCoord` property, the optional chaining returns undefined, which then becomes null through the nullish coalescing operator.
+Let me check how the test POI is being registered compared to the example in harness.js...
+Searched for text getPoi\|centerCoord\|registerPoi (**/src/world/poiGraph.js), no results
+Read poiGraph.js, lines 1 to 80
+Searched for text function getPoi\|export function register (**/src/world/poiGraph.js), no results
+Searched for regex function getPoi|function register (**/src/world/poiGraph.js), 3 results. Files: c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js
+Read poiGraph.js, lines 132 to 175
+Thinking: Now let me check the `POI_DRAFT_DEPTH_M` and what valid `draftClass` values are for a POI. Looking at the error:
+```
+`poiGraph.registerPoi [${nodeSpec.id}]: draftClass must be one of: ${Object.keys(POI_DRAFT_DEPTH_M).join(', ')}`
+```
+I'm using `draftClass: 'DEEP'` for my POI. Let me check what `POI_DRAFT_DEPTH_M` values are:
+Searched for text POI_DRAFT_DEPTH_M (**/src/world/poiGraph.js), 5 results. Files: c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js
+Read poiGraph.js, lines 81 to 98
+Thinking: `draftClass: 'DEEP'` IS valid. So my POI registration should work without error.
+Let me now look at `getPoi` to understand what it returns:
+Read poiGraph.js, lines 356 to 375
+Thinking: `getPoi` returns `_nodes.get(poiId)`. If the POI is not in `_nodes`, it returns `undefined`. Then `poi?.centerCoord` would be `undefined ?? null` = `null`. And `_getPoiCenter()` returns null.
+So the question is: is the POI still registered in `_nodes` when `_onInputQ` fires?
+Wait - does `poiGraph._clear()` get called somewhere between the POI registration and the INPUT_Q event? Let me trace through again:
+1. Section 2 starts: `resetAll()` is called → `poiGraph._clear()` → `_nodes` and `_edges` are cleared
+2. `buildTestWorld()` is called → `poiGraph.registerPoi({id: TEST_POI_ID, ...})` → POI added to `_nodes`
+3. `transitionTo(MODES.TOURNAMENT_ACTIVE)` → This calls `modeRouter.transitionTo`, which handles unmounting departing manifests, releases the input adapter, resets and starts the clock, dispatches a MODE_CHANGED event, and emits events on the bus for arriving manifests — none of which should clear poiGraph.
+4. `armCastPipeline()` dispatches TARGET_LOCKED to the cast pipeline, which calls `wind.sample(atMs)` but doesn't interact with poiGraph.
+5. `_enterLureSelect(atMs)` runs without touching poiGraph.
+6. Spacebar input moves to ARMED state with no poiGraph interaction.
+7. Q input fires `_onInputQ`, which calls `_getTargetAbsCoord()` → `_getPoiCenter()` → `poiGraph.getPoi(TEST_POI_ID)` — so the POI should still be there to retrieve.
+Wait, unless `poiGraph.getPoi` is being called with a different poiId than `TEST_POI_ID`. Let me trace the poiId flow: `_target.poiId` gets set from the TARGET_LOCKED event payload, which explicitly passes `TEST_POI_ID`. Then in `_getPoiCenter()`, it checks `stateStore.getState().session?.player?.currentPoiId` first, but if that's undefined, it falls back to `_target?.poiId`.
+After `stateStore._reset()` and the state transitions, `session.player.currentPoiId` should be null, so it would use `_target?.poiId` which is `TEST_POI_ID`. So `poiGraph.getPoi(TEST_POI_ID)` should be called...
+Wait, let me trace through `_onInputQ` more carefully. The spook coordinate gets set based on the phase — if we're in `ARMED` mode, it uses the target's absolute coordinate, but if we're `IDLE` and have a landing coordinate, it uses that instead. Let me check which path we're actually taking here. → ARMED. Then `bus.emit('INPUT_Q', ...)` fires with the phase correctly set to ARMED ✓.
+For 2d, `armCastPipeline()` gets called, but by the end of 2c, `_onInputQ` already called `_resetToIdle()` to set `_phase = 'IDLE'`. When `clock.tick(2000)` runs, there are no pending castPipeline callbacks since `_resetToIdle()` cancelled everything through `_cancelWhiff()` and `_cancelMetronomeTimers()`. So the clock just advances without triggering any castPipeline state changes.
+After that 2000ms tick, `_phase` is still IDLE. Then 2d calls `armCastPipeline()` which emits TARGET_LOCKED to transition into LURE_SELECT, then INPUT_SPACEBAR to confirm the lure and move to ARMED, then INPUT_Q fires with `_phase === 'ARMED'` as expected ✓.
+Now when INPUT_Q executes, it calls `_getTargetAbsCoord()` which should retrieve the POI center using `_target.poiId = TEST_POI_ID`. I'm wondering if `poiGraph.getPoi(TEST_POI_ID)` is returning null somehow — maybe `poiGraph._clear()` got called somewhere in the event chain, though that seems unlikely. Let me trace through what happens when TARGET_LOCKED fires to see if any module clears the graph. Actually, I should add some debugging to the test to see what's actually happening with `_getPoiCenter()` and whether it's successfully calling `poiGraph.getPoi`.
+Actually, I'm realizing the real issue might be about module references. Both castPipeline and my test file import poiGraph as a singleton, so they should share the same `_nodes` Map. But let me verify that castPipeline actually imports poiGraph in the first place.
+Read castPipeline.js, lines 1 to 50
+Searched for regex ^import (**/src/casting/castPipeline.js), 10 results. Files: c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Thinking: Good, `castPipeline.js` imports `poiGraph` directly. So both my test and castPipeline use the same module instance. ✓
+Let me think about this differently. Let me add a direct check in the test to verify what `poiGraph.getPoi(TEST_POI_ID)` returns and what `worldMap.getTile({x:0, y:0})` returns at test 2d time. Let me temporarily instrument the test to print debug info.
+Actually, let me think about this differently. Let me re-read the Section 2 code:
+```js
+// ── 2d. Power Rip: spook increments by +1 (NORMAL splash) ───────────────────
+```
+Now I'm setting up the final test attempt by re-arming the pipeline, capturing the spook value before the rip fires, then emitting the input event and listening for any spook applied events to see what actually happens.
+After the rip, I'm reading the spook value again at the same clock time to avoid decay calculations, then asserting that it should have incremented by 1. But looking at the test output, something's wrong — the spook value isn't changing at all, which suggests that either the rip in section 2c didn't actually apply spook to the tile, or there's an issue with how the spook is being tracked or decayed between test sections.
+``` I'm looking at the `_onInputQ` function and noticing that it passes `atMs` to `applySplash`, which means the spook is being applied at the event's timestamp rather than the current clock time. This could explain why `readSpook` called immediately after in 2d is seeing a different state—the spook was applied at a past timestamp, so depending on when `readSpook` checks it, the timing might not match up as expected. Writing tile state update... callbacks fire during `clock.tick(2000)`, but since we're in TOURNAMENT_ACTIVE with no active fight, there shouldn't be any pending handles from fightLoop or castPipeline. So that's not causing the issue. Let me explore whether `registerTile` or `mutateTileState` might be resetting the spook state somehow. `mutateTileState` isn't wrapped in error handling, so if the tile object is frozen, the assignment would throw. But I'm not seeing that error surface in the test, which makes me wonder if `worldMap.registerTile` is actually freezing the outer tile object or just its nested properties.
+Read worldMap.js, lines 270 to 370
+Thinking: The tile is NOT frozen (`const tile = { id, coord, traits, state: ... }`). The `traits` are frozen but `state` is mutable. `mutateTileState` does `tile.state = updater(tile.state)` which is valid since `tile` itself is not frozen. ✓
+So why is spook not being written? Let me think about another possibility...
+Maybe the issue is with `registerTile` throwing because the tile already exists when `buildTestWorld()` is called the second time? Let me check: at the start of Section 2, `resetAll()` calls `worldMap._clear()`. 
+If `_clear()` properly empties the `_tiles` Map, then the second `registerTile` should work fine. But if `_clear()` doesn't actually clear the map, we'd get a "tile already exists" error on the second registration. Since Section 2 tests are partially passing (2a, 2b, 2c all succeed), the tile registration must be working correctly. Let me look at what `_clear()` actually does.
+Searched for regex function _clear\|export function _clear (**/src/world/worldMap.js), no results
+Searched for text _clear (**/src/world/worldMap.js), 1 result. Files: c:\nbs\afish\src\world\worldMap.js
+Thinking: Let me add some debugging. Rather than reading more source files, let me add a temporary console.log to the test to see exactly what's happening at test 2d time. Actually, let me approach this differently: let me add an explicit assertion about what `spookAppliedEvents.length` is in 2d and also whether `armCastPipeline()` succeeded in getting to ARMED state.
+Actually, a better approach: let me add direct assertions around spook coord computation. Let me just temporarily add a console.log to the test to see what `poiGraph.getPoi(TEST_POI_ID)` returns and what tile state looks like before and after.
+Let me step back and look at the test output more carefully. The test passes for 2c when the clock advances 2000ms, but the spook value is 0 in 2d. I'm going to add some diagnostic output to section 2d and re-run. My working theory is that `_getTargetAbsCoord()` is returning null, which means `spookCoord` ends up null and `applySplash` never gets called, even though Power Rip still works since CAST_ABORTED fires and the clock advances.
+Looking at the input handler, I can see the issue: when the phase is ARMED, we try to get the target coordinate and only apply the splash if that coordinate exists. But the other effects like the state announcement and cast abort still fire regardless of whether we got a valid coordinate. So if the target coordinate lookup is failing, the splash never happens but everything else proceeds normally.
+Now I need to trace through `_getPoiCenter()` to understand why it's returning null. It's trying to fetch the POI ID from the state store or the target object, and if neither has a valid ID...
+Continuing the trace... So when the Q input fires during ARMED state, `_getTargetAbsCoord()` should be able to retrieve the POI center since `_target` is set with the correct `poiId`. But it's returning null somehow, which suggests either the POI isn't actually registered in the graph or there's an issue with how the ID is being looked up. Let me add some debug logging to the test to see what `spookCoord` actually contains.
+Let me add temporary diagnostics to understand the 2d failure:
+Read phase1.test.js, lines 370 to 395
+Read phase1.test.js, lines 430 to 465
+Thinking: Let me add temporary diagnostics to section 2d to check what's happening. I'll print:
+1. The result of `poiGraph.getPoi(TEST_POI_ID)`
+2. Whether `worldMap.getTile(TEST_TILE_COORD)` returns something
+3. The `spookAppliedEvents.length`
+4. What `castSpookModel.readSpook` returns for the tileThis will help me understand where the issue is.Actually, I think I can approach this differently. Let me check if `TARGET_LOCKED` is being emitted BEFORE `bus.on` subscription in castPipeline. 
+Wait, castPipeline subscribes during `onMount`, which happens when I call `transitionTo(MODES.TOURNAMENT_ACTIVE)`, so the listener should be active by the time I call `armCastPipeline()`. But I need to verify that `_onTargetLocked` is actually being invoked and `_target` is being set. Let me add a CAST_PHASE_CHANGED listener to confirm the pipeline is transitioning to ARMED. Actually, looking at this differently—in 2c I'm asserting that CAST_ABORTED fires.
+The assertions pass, which means `_onInputQ` is definitely running. Since `_onInputQ` only executes when the phase is ARMED or in post-cast IDLE, the castPipeline must be in ARMED state when 2c fires. The issue is that `_getTargetAbsCoord()` returns null, so spook never gets applied. This can only happen if `_getPoiCenter()` returns null, which occurs when either `poiId` is falsy (both `currentPoiId` and `_target.poiId` are falsy) or when `poiGraph.getPoi(poiId)` returns undefined or throws. If `_target.poiId` is actually set to TEST_POI_ID, then the POI must not be registered in the graph. But wait—I'm noticing something about the TARGET_LOCKED event. When `armCastPipeline()` dispatches it, the reducer tries to update `state.tournament.lastTarget`, but what if `state.tournament` itself is null?
+Actually, looking at the state after `TOURNAMENT_ENTERED` is dispatched, the tournament partition should have all the expected fields including `lastTarget` set to null initially. So when `_onTargetLocked` fires and spreads `...state.tournament`, it should work fine. Unless there's something wrong with how `stateStore.getState().tournament` is being accessed at that moment.
+Let me trace through what happens with the scan lock state - when `_onTargetLocked` dispatches `SCAN_LOCKED`, the reducer sets `scanLocked` to true, then when `_resetToIdle()` runs and dispatches `SCAN_UNLOCKED`, it goes back to false. That part checks out. But I need to verify what `stateStore._reset()` actually does with the mode field.
+Searched for text _reset (**/src/core/stateStore.js), 4 results. Files: c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\core\stateStore.js
+Read stateStore.js, lines 547 to 553
+Thinking: `stateStore._reset()` resets state to initial values AND clears `_subscribers`. This means after `_reset()`, stateStore has no subscribers! And when `transitionTo(MODES.TOURNAMENT_ACTIVE)` calls `stateStore.dispatch({ type: 'MODE_CHANGED', ... })`, it dispatches and updates state, but doesn't fire any subscribers (since they're all cleared).
+Wait, but `stateStore.dispatch` still applies the reducer. Let me check:
+Read stateStore.js, lines 60 to 140
+Thinking: Found it! `session.player.currentPoiId` defaults to `'DOCK'`, not `null`!
+Looking at:
+```js
+session: {
+  player: {
+    currentPoiId: 'DOCK',
+    ...
+  },
+}
+```
+After `stateStore._reset()`, the session.player.currentPoiId is `'DOCK'`, not null!
+Now in `_getPoiCenter()`:
+```js
+const poiId = stateStore.getState().session?.player?.currentPoiId ?? _target?.poiId;
+// = 'DOCK' (not null, not undefined)
+```
+The function checks if `poiId` exists, and since `'DOCK'` is truthy it continues. But then it tries to look up that POI in the graph, which doesn't have a `'DOCK'` entry registered, so it returns `undefined`. That cascades through the nullish coalescing operator and ultimately `_getPoiCenter()` returns `null`, which means `_getTargetAbsCoord()` also returns null, and the `if (spookCoord)` check fails.
+I need to fix this by either registering the `'DOCK'` POI in the world map, updating the player's `currentPoiId` to point to an actual registered POI, or clearing it so the fallback logic kicks in. I could dispatch an action to update `currentPoiId` to the test POI, or register my test POI under the `'DOCK'` id instead.
+```
+js
+poiGraph.registerPoi({
+  id:          'DOCK',
+  label:       'Dock',
+  centerCoord: TEST_TILE_COORD,
+  frameRadius: 30,
+  draftClass:  'DEEP',
+});
+```
+Alternatively, I could dispatch the player arrival action after transitioning to the active state, or just rename the test POI to use `'DOCK'` consistently throughout, or have the arm cast pipeline handle the player positioning directly.
+I'm leaning toward Option A since it's the most straightforward. Let me verify that registering both `'DOCK'` and `TEST_POI_ID` at the same coordinates won't cause problems—when the pipeline looks up the center for `'DOCK'`, it should just return the tile position, and the spook offset calculation should work fine with both POIs pointing to the same location.
+Actually, Option B might be cleaner—I can dispatch a `PLAYER_ARRIVED_AT_POI` event to update the player's current POI state directly. Let me check what that reducer does...
+Defining the reducer...
+So dispatching this event would set `currentPoiId` to the test POI, which means `_getPoiCenter()` will correctly retrieve that POI's center coordinates for the spook test.
+I could also just register a 'DOCK' POI at the origin in my test world setup—that's cleaner and mirrors how the real game works, where 'DOCK' is always a valid POI location. Let me add that to `buildTestWorld()` so it's consistent with the actual game structure. I think the cleanest approach is to register a 'DOCK' POI in `buildTestWorld()` that points to the test tile coordinates, so the player's default `currentPoiId` of 'DOCK' will resolve correctly and `_getPoiCenter()` will return the expected {x:0, y:0} position for the spook test.
+Found it.
+stateStore._initialState() (c:\nbs\afish\src\core\stateStore.js:40)
+sets
+session.player.currentPoiId = 'DOCK' (c:\nbs\afish\src\core\stateStore.js:104)
+—
+_getPoiCenter() (c:\nbs\afish\src\casting\castPipeline.js:730)
+uses that first and looks up 'DOCK' in poiGraph, which isn't registered, so it silently returns null and spook coord is never computed. Fix: register a &#39;DOCK&#39; POI in
+buildTestWorld() (c:\nbs\afish\tests\harness-fish.js:172)
+:
+Replacing 21 lines with 32 lines in phase1.test.js
+```
+```
+```
+```
+Running node tests/phase1.test.js. node tests/phase1.test.js
+34 passed, 0 failed.
+Updated todo list. 1 items: Write tests/phase1.test.js (completed)
+tests/phase1.test.js (/c:/nbs/afish/tests/phase1.test.js)
+passes 34/34. Two fixes were applied along the way:
+**
+bus._reset (c:\nbs\afish\src\casting\castPipeline.js:197)
+doesn't exist** — the bus has no reset method; subscriptions are cleaned up by calling
+transitionTo(HUB) (c:\nbs\afish\tests\harness-fish.js:40)
+first, which triggers each subsystem's
+onUnmount() (c:\nbs\afish\src\casting\castPipeline.js:1392)
+.
+**
+session.player.currentPoiId (c:\nbs\afish\src\core\stateStore.js:106)
+defaults to &#39;DOCK&#39;** —
+castPipeline._getPoiCenter() (c:\nbs\afish\src\casting\castPipeline.js:730)
+uses
+currentPoiId (c:\nbs\afish\src\core\stateStore.js:106)
+before falling back to
+_target.poiId (c:\nbs\afish\src\casting\castPipeline.js:721)
+, so
+poiGraph.getPoi('DOCK') (c:\nbs\afish\src\casting\castPipeline.js:204)
+returned undefined and the Power Rip spook coord was silently null. Fixed by registering a &#39;DOCK&#39; POI in
+buildTestWorld() (c:\nbs\afish\tests\harness-fish.js:172)
+pointing at the test tile.

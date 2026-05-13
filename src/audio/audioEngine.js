@@ -1557,6 +1557,7 @@ function _registerBusListeners() {
     switch (outcome) {
       case 'FISH_LANDED':  _playCombat_landed();     break;
       case 'LINE_SNAPPED': _playCombat_snap();        break;
+      case 'ROD_SNAPPED':  _stopFightVoice(); _playCombat_snap(); break;
       case 'HOOK_SHAKEN':  _playCombat_hookShaken();  break;
       default: break;
     }
@@ -1622,6 +1623,24 @@ function _registerBusListeners() {
     if (_fightActive) return;
     if (!_IS_BROWSER || !_actx) { _logAudio('ui', 'select'); return; }
     _playUI_select();
+  }));
+
+  // ── STATE_ANNOUNCE (v1.82 Audio-Logic Bridge) ─────────────────────────────
+  // ROD_BROKEN   → snap crack (rod just broke under yank pressure)
+  // STRIKE_HEAVY → extra-weighted bite thud (reinforces the big-fish audio cue)
+  // All other tokens are intentionally silent in the audio engine; the TTS
+  // layer (ttsQueue.js) and the UI announcer (tournamentActive.js) handle them.
+  _unsubs.push(bus.on('STATE_ANNOUNCE', (evt) => {
+    const token = evt?.token ?? '';
+    if (!_IS_BROWSER || !_actx) {
+      _logAudio('combat', 'state_announce', { token });
+      return;
+    }
+    switch (token) {
+      case 'ROD_BROKEN':   _playCombat_snap(); break;
+      case 'STRIKE_HEAVY': _playCombat_bite(); break;
+      default: break;
+    }
   }));
 }
 

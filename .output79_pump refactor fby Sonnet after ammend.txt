@@ -1,0 +1,141 @@
+Thinking: Let me start by reading the current state of the files I need to modify.
+Created 4 todos. 4 items: Read equipment.js and fightLoop.js (in-progress); Update equipment.js YANK_WEAR (not-started); Update fightLoop.js Trophy Yank & Deceptive Thud (not-started); Update .changelog.md (not-started)
+Read equipment.js, lines 1 to 80
+Read fightLoop.js, lines 1 to 80
+Searched for files matching **/.changelog.md, 1 match. Files: c:\nbs\afish\.changelog.md
+Read equipment.js, lines 80 to 160
+Read fightLoop.js, lines 80 to 200
+Read .changelog.md, lines 1 to 30
+Thinking: Let me continue reading both files to understand the full structure.
+Read fightLoop.js, lines 200 to 350
+Searched for regex PUMP_WEAR|DURABILITY_LOSS|_damageDurability|damageItem (**/src/equipment/equipment.js), 14 results. Files: c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js, c:\nbs\afish\src\equipment\equipment.js
+Read fightLoop.js, lines 350 to 500
+Read equipment.js, lines 905 to 1476
+Thinking: Now I have a clear picture of all the code I need to change. Let me plan the changes:
+**1. `src/equipment/equipment.js`:**
+- Line 917: `PUMP_WEAR: 0.010` → `YANK_WEAR: 0.10`
+- Line 1250: docstring `'PUMP_WEAR'` → `'YANK_WEAR'`
+- Line 1450-1451: `_damageDurability` docstring `'PUMP_WEAR'` → `'YANK_WEAR'`
+**2. `src/fish/fightLoop.js`:**
+- I need to import `rng` from the core module and remove the `PUMP_STAMINA_DRAIN` constant
+- Update references from `INPUT_PUMP` and modify the `_fight` state type to include `trophyMultiplier`
+- In `_startFight()`, I'll initialize the trophy multiplier to 1.0 and change the event emissions from `TIME_TO_FIGHT` to the appropriate strike intensity events based on the initial pull calculation
+- Now I'm rewriting `_onPump()` to handle the Trophy Yank mechanic, and I should also check the rng.js file to understand how the random number stream API works
+Now I need to check the rng module and the remaining part of
+_startFight (c:\nbs\afish\src\fish\fightLoop.js:329)
+:
+Searched for text rngStream export (**/src/core/rng.js), no results
+Read fightLoop.js, lines 500 to 560
+Searched for regex export|rngStream (**/src/core/rng.js), 20 results. Files: c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js, c:\nbs\afish\src\core\rng.js
+Thinking: Now I have all the information I need. Let me check how rngStream.next() works - it returns a value in [0,1] based on the rng.js code at line 119. The `rngStream(name)` returns a stream object, and calling it (or calling `.next()`) returns a value in [0,1]. Let me check the stream object structure.
+Read rng.js, lines 119 to 180
+Thinking: Now I have all the context I need. The `rngStream(name)` returns an object with a `.next()` method that returns a float in [0,1).
+Key insight: **`rngStream()` creates a new stream on every call.** Per the docstring: "Every call to rngStream(name) creates a NEW stream object starting from the same seed." So I need to call `rngStream('fight')` once when a fight starts and store it on the `_fight` object for reuse throughout the fight. 
+But wait — the user's instruction says:
+- `const roll = rng.rngStream('fight')()` — but that would call the function directly? Let me re-read the API.
+Looking at the actual API, `rngStream(name)` returns an object with methods like `.next()`, not a function itself. So the user's notation `rng.rngStream('fight')()` wouldn't work as written — the correct approach is `rngStream('fight').next()`. The key constraint is that every call to `rngStream(name)` creates a fresh stream, so I need to store the stream object once and reuse it throughout the fight. and I get proper deterministic progression through the sequence rather than resetting to the same value each time.
+Now I'm mapping out the specific changes needed: renaming `PUMP_WEAR` to `YANK_WEAR` in the durability constants and updating the related documentation strings, then modifying the fight loop to import the RNG module and remove the old pump stamina logic.
+In `_startFight`, I need to initialize the trophy multiplier on the fish instance, create an RNG stream for the fight, compute the initial pull result, and emit the appropriate strike token instead of the time-to-fight event. Then I'll rewrite the pump handler for the new Trophy Yank mechanic and update the header comments to reflect the new events and decisions.
+Let me examine the full `_startFight` implementation... I need to grab the rod from the equipment catalog to get its max durability for the snap probability calculation. Let me also check the `_fight` state type definition to see how to properly add the rng field there.
+I'm adding `fightRng: object` to the state type definition. For the snap logic, when the player presses spacebar, I'll roll against the snap probability using the fight RNG, then read the current rod's durability from the state store to determine if the snap succeeds. I'm deciding whether to read the rod durability directly from stateStore or through the equipment module, and I think stateStore is cleaner since it's already imported in fightLoop.js. Now I'm writing out the full _onPump function, starting with the special case where the Crooked Stick is equipped and should do nothing.
+Reading rod durability from the live state... I'm incrementing the trophy multiplier by 0.15 for each yank attempt, then advancing the clock by a second. I'm also double-checking that I initialized trophyMultiplier to 1.0 at the start of the fight, so the undefined check is just a safety fallback. Now I need to set up the `_startFight` function to handle the Deceptive Thud effect and initialize the trophy multiplier there.
+Setting up the fight initialization... I need to trace through how the rod durability check works during fight ticks. When `_onPump` calls `clock.tick(1000)`, it triggers multiple fight ticks synchronously, and if durability hits zero during those ticks, the fight tick should emit `ROD_BROKEN` and resolve the fight. But in the Trophy Yank snap scenario, the snap happens immediately before any wear is applied, so I need to handle that timing differently.
+Read fightLoop.js, lines 560 to 700
+Thinking: Now I have all the context I need. Let me plan the implementation:
+**`src/equipment/equipment.js`:**
+1. `DURABILITY_LOSS.rod`: `PUMP_WEAR: 0.010` → `YANK_WEAR: 0.10`
+2. `damageItem` docstring: `'PUMP_WEAR' — D-082 Tactical Pump: deducts 0.01 × maxDurability from rod (rods only)` → `'YANK_WEAR' — D-082 Trophy Yank: deducts 0.10 × maxDurability from rod (rods only)`
+3. `_damageDurability` docstring: updating the parameter documentation to reflect `YANK_WEAR` instead of `PUMP_WEAR`, noting it's rod-only for D-082, and that lures silently skip unknown damage kinds...
+Now I'm updating `src/fish/fightLoop.js` with several changes: importing the RNG module, removing the stamina drain constant, adjusting the `INPUT_PUMP` comment, and adding `fightRng` to the fight type signature. In `_startFight`, I'm initializing the trophy multiplier, creating an RNG stream for the fight, passing it into the fight object, and replacing the time-to-fight announcement with an initialization call.
+I also need to completely rewrite `_onPump` and update the header comments throughout the file since they reference the old `TIME_TO_FIGHT`, `Tactical Pump`, `PUMP_WEAR`, and pressure event mechanics that are being replaced by the Trophy Yank system.
+Now I'm working through the specific replacements: adding the rng import, removing the `PUMP_STAMINA_DRAIN` constant, and updating the `_fight` type comment to include the new `fightRng` property.
+Updating the `_startFight` function to dispatch the scan lock, emit the hooked and announcement events, then set up the pump input listener...
+Now I'm defining the fight style modifiers based on fish behavior type, which will scale the strike intensity accordingly. Setting up the event listener for the pump input, then realizing I need to initialize `fishInstance.trophyMultiplier` and `fightRng` before the `_fight` object is created since those values are referenced in the strike calculation. Let me trace through the initialization order: `_fight` gets constructed first, then the state dispatch and fish hooked event fire. Setting up the _fight object...
+I need to initialize the trophy multiplier and create a dedicated RNG stream for the fight, then inject that into the fight state object. The approach involves two key changes: setting up those values before the _fight assignment, and replacing the STATE_ANNOUNCE emission with something cleaner.
+Now I'm mapping out the specific replacements across the files—swapping PUMP_WEAR references to YANK_WEAR in the equipment module's durability loss constant, the damageItem docstring, and the _damageDurability docstring.
+For fightLoop.js, I need to add the rng import, remove the PUMP_STAMINA_DRAIN constant, initialize the trophy multiplier and create a fight-scoped random number generator, then inject that into the _fight object. I'm also replacing TIME_TO_FIGHT with Deceptive Thud in _startFight and rewriting the _onPump function entirely. Finally, I should update the header comments that reference TIME_TO_FIGHT. I need to update the header comments to reflect the functional changes — removing the TIME_TO_FIGHT event, adding the STRIKE_* variants, and fixing the decision descriptions to reference Trophy Yank instead of Tactical Pump and the new no-op behavior. I'll keep these updates minimal and focused on correctness, bundling them into the same replacement call.
+Now I'm setting up the _fight object initialization... Looking at the code structure around lines 330-395, I can see where the `_fight` object is being initialized with the tackle and rod information, and I need to trace through to find the exact insertion point for adding the `fightRng` parameter and the trophy multiplier assignment.
+Continuing with the initialization, I'm setting up the emitted tension value, the rod strain flag for tracking when that event fires, and the threshold flags for slack and snap danger states. Then I'm dispatching the scan lock to prevent other actions, emitting the fish hooked event with the starting tension, and triggering the narrative announcement that the fight is live. After that, I'm subscribing the pump listener for spacebar input during the fight.
+Updating the equipment durability constants and docstrings to replace pump wear references with yank wear... Updating the INPUT_PUMP comment to reflect Trophy Yank instead of Tactical Pump, though I'll leave the variable name itself unchanged since the user didn't ask for a rename. The header comments need updating to match the new mechanics, and that's part of implementing the changes properly. Now I'm going through the remaining header comment updates—swapping out the old decision references for the new ones, like replacing the Tactical Pump description with Trophy Yank and updating the Crooked Stick exemption to reference the _onPump no-op instead. I need to locate the exact text in the _fight type declaration around those lines to make sure I'm targeting the right sections. Continuing with the fight initialization...
+I'm setting up the remaining fight state properties like slack timing and tension tracking, then dispatching a scan lock event and emitting the FISH_HOOKED event to signal the fight has started. Next I need to handle the strike type selection for the deceptive thud mechanic.
+Calculating strike intensity... Defining the execution flow for the Trophy Yank handler — first checking if it's a Crooked Stick (which does nothing), then calculating the snap roll probability based on current durability, applying wear to the rod if successful, increasing the trophy multiplier, and advancing the clock as a penalty. Still writing pump logic... I need to verify the exact structure of the `_fight` type definition so I can insert the `fightRng` property in the right spot after `activeRodId`. Updating the event documentation in fightLoop.js to reflect the new state announcements and removing outdated references like the Tactical Pump mechanic, then replacing the STATE_ANNOUNCE line with the corrected D-080 reference. Updating the docstrings for the equipment damage mechanics, particularly around pump wear effects on the rod and the crooked stick exemption handling. I'm looking at the input constants and stamina drain definition. I need to change the Tactical Pump comment to Trophy Yank and note that it's a D-082 feature, with the stamina drain constant set to 0.010 based on the reel tick calculation.
+Now I'm planning the file replacements across equipment.js and fightLoop.js, starting with identifying the exact text blocks to modify in the _startFight function. Initializing the fight state with timing and threshold tracking, then locking the scan and emitting the hook event to notify listeners that combat has begun.
+Now I'm setting up the pump input handler to listen for spacebar taps during the fight, which will trigger stamina drain and apply pressure mechanics to the fish. Continuing with the stamina drain calculation, then applying the hookset pressure event to trigger the fish's reaction. After that, I'm checking if there's an active rod and applying wear damage to it, with the crooked stick exemption handled internally. Finally, the clock advances by 1 second to fire all the synchronized fight ticks, though the fight state could potentially end during this process.
+Now I'm ready to construct the multi_replace_string_in_file call. One thing to verify: `applyPressureEvent` is still imported and used elsewhere in the codebase—specifically in `_resolveFight` for catch events and in `_onBiteThud` for hookset events on bites—so I should keep that import intact rather than removing it.
+For the changelog, I need to prepend the new entry to `.changelog.md` before the existing content, which starts with `## v1.77 — Phase 1, Step 2: Resource Burn & Fight Loop`. I'll add a blank line separator between the new entry and what's already there.
+Now I'm executing all these changes.
+I have everything I need. Let me execute all the changes in parallel across the three files.
+Starting: Update equipment.js YANK_WEAR (2/4). 4 items: Read equipment.js and fightLoop.js (completed); Update equipment.js YANK_WEAR (in-progress); Update fightLoop.js Trophy Yank & Deceptive Thud (not-started); Update .changelog.md (not-started)
+Replacing 4 lines with 4 lines in equipment.js
+```
+```
+```
+```
+Starting: Update fightLoop.js Trophy Yank & Deceptive Thud (3/4). 4 items: Read equipment.js and fightLoop.js (completed); Update equipment.js YANK_WEAR (completed); Update fightLoop.js Trophy Yank & Deceptive Thud (in-progress); Update .changelog.md (not-started)
+Now the larger
+fightLoop.js (/c:/nbs/afish/src/fish/fightLoop.js)
+edits — import, constant, type comment,
+_startFight (c:\nbs\afish\src\fish\fightLoop.js:329)
+, and
+_onPump (c:\nbs\afish\src\fish\fightLoop.js:393)
+rewrite, plus critical header comment corrections:
+Replacing 95 lines with 128 lines in fightLoop.js
+```
+```
+```
+```
+Starting: Update .changelog.md (4/4). 4 items: Read equipment.js and fightLoop.js (completed); Update equipment.js YANK_WEAR (completed); Update fightLoop.js Trophy Yank & Deceptive Thud (completed); Update .changelog.md (in-progress)
+Replacing 1 lines with 21 lines in .changelog.md
+```
+```
+```
+```
+Now do a final sanity check — no live PUMP_WEAR, PUMP_STAMINA_DRAIN, or TIME_TO_FIGHT references should survive in the two implementation files:
+Searched for regex PUMP_WEAR|PUMP_STAMINA_DRAIN|TIME_TO_FIGHT|Tactical Pump (**/src/**), 4 results. Files: c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js, c:\nbs\afish\src\fish\fightLoop.js
+Four stale comment labels — the variable/section names still say "Tactical Pump". Cleaning those up:
+Replacing 4 lines with 4 lines in fightLoop.js
+```
+```
+```
+```
+Searched for regex PUMP_WEAR|PUMP_STAMINA_DRAIN|TIME_TO_FIGHT|Tactical Pump (**/src/**), no results
+Clean.
+Completed: Update .changelog.md (4/4). 4 items: Read equipment.js and fightLoop.js (completed); Update equipment.js YANK_WEAR (completed); Update fightLoop.js Trophy Yank & Deceptive Thud (completed); Update .changelog.md (completed)
+v1.79 is locked. Here's what changed:
+equipment.js (/c:/nbs/afish/src/equipment/equipment.js)
+-
+DURABILITY_LOSS.rod.PUMP_WEAR: 0.010 (c:\nbs\afish\src\equipment\equipment.js:912)
+→ `YANK_WEAR: 0.10` (10× increase)
+`damageItem` and `_damageDurability` docstrings updated to reference
+YANK_WEAR (c:\nbs\afish\src\equipment\equipment.js:917)
+fightLoop.js (/c:/nbs/afish/src/fish/fightLoop.js)
+**Import:** `import * as rng from '../core/rng.js'` added
+**Removed:** `PUMP_STAMINA_DRAIN` constant, stamina drain call, phase-pressure `HOOKSET` event from SPACEBAR path
+**
+_startFight (c:\nbs\afish\src\fish\fightLoop.js:326)
+:** Initialises
+fishInstance.trophyMultiplier = 1.0 (c:\nbs\afish\src\fish\fightLoop.js:262)
+, creates
+fightRng = rng.rngStream('fight') (c:\nbs\afish\src\fish\fightLoop.js:341)
+(stored on
+_fight (c:\nbs\afish\src\fish\fightLoop.js:210)
+), computes InitialPull = weightKg × styleMod × (0.8 + rng×0.4), emits STRIKE_LIGHT / STRIKE_MODERATE / STRIKE_HEAVY instead of TIME_TO_FIGHT
+**
+_onPump (c:\nbs\afish\src\fish\fightLoop.js:404)
+(Trophy Yank):**
+`crooked_stick` → early return (complete no-op, D-083)
+Reads
+currentDurabilityFraction = rodEntry.durability / rodCatalog.durability (c:\nbs\afish\src\fish\fightLoop.js:614)
+, rolls
+f.fightRng.next() (c:\nbs\afish\src\fish\fightLoop.js:407)
+vs
+P_snap = 0.10 + (1 − fraction) (c:\nbs\afish\src\fish\fightLoop.js:428)
+— failure emits ROD_BROKEN and resolves ROD_SNAPPED
+  3.
+equipment.damageItem(activeRodId, 'YANK_WEAR') (c:\nbs\afish\src\equipment\equipment.js:917)
+4.
+fishInstance.trophyMultiplier += 0.15 (c:\nbs\afish\src\fish\fightLoop.js:262)
+5.
+clock.tick(1000) (c:\nbs\afish\src\fish\fightLoop.js:76)
+.changelog.md (/c:/nbs/afish/.changelog.md)
+New `## v1.79 — Trophy Yank & Deceptive Thud` section prepended documenting all mechanical changes

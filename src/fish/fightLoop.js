@@ -29,17 +29,18 @@
  *            tension ≤ 0 for > 1500ms continuously → HOOK_SHAKEN.
  *            landingDistance ≤ 0.5 → FISH_LANDED.
  *            rod durability ≤ 0 → ROD_BROKEN + ROD_SNAPPED.
- *   D-039 — Pressure events: HOOKSET +1 on every hookset attempt, CATCH +1 on land,
- *            HOOKSET +1 per Tactical Pump (Phase Pressure).
+ *   D-039 — Pressure events: HOOKSET +1 on every hookset attempt, CATCH +1 on land.
  *   D-049 — Lure rejection recorded on hookset miss and on hook-shake.
- *   D-080 — STATE_ANNOUNCE { token: 'TIME_TO_FIGHT' } emitted on successful hookset.
- *   D-082 — Ergonomic Reversal (LOCKED):
+ *   D-080 — Deceptive Thud (v1.78): emits STRIKE_LIGHT / STRIKE_MODERATE / STRIKE_HEAVY on
+ *            successful hookset, selected by InitialPull = weightKg × styleMod × RNG(0.8–1.2).
+ *            Bands (LOCKED): STRIKE_LIGHT < 1.5; STRIKE_MODERATE 1.5–3.5; STRIKE_HEAVY ≥ 3.5.
+ *   D-082 — Ergonomic Reversal + Trophy Yank (LOCKED, v1.78):
  *            ARROW_DOWN (held) = Reel In (tension UP).
  *            ARROW_UP   (held) = Give Drag (tension DOWN).
- *            SPACEBAR   (tap)  = Tactical Pump: 1s clock penalty + stamina drain +
- *                                Phase Pressure + PUMP_WEAR on rod (D-082).
+ *            SPACEBAR   (tap)  = Trophy Yank: snap roll P_snap, then YANK_WEAR + trophyMultiplier
+ *                                +0.15 + 1 s clock penalty (D-082).
  *            ARROW_UP   (tap)  = Hookset trigger during HOOKSET_WINDOW.
- *   D-083 — Crooked Stick exemption: handled by equipment.damageItem no-op.
+ *   D-083 — Crooked Stick exemption: SPACEBAR is a complete no-op when activeRodId === 'crooked_stick'.
  *
  * H-005 compliance:
  *   All clock handles and bus subscriptions are cancelled in onUnmount.
@@ -53,7 +54,7 @@
  *   HOOKSET_ATTEMPTED    { hit: false, fishInstance, atMs }
  *   HOOKSET_MISSED       { fishInstance, lureId, coordKey, atMs }
  *   FISH_HOOKED          { fishInstance, startTension, atMs }
- *   STATE_ANNOUNCE       { token: 'TIME_TO_FIGHT', atMs } — D-080
+ *   STATE_ANNOUNCE       { token: 'STRIKE_LIGHT'|'STRIKE_MODERATE'|'STRIKE_HEAVY', atMs } — D-080
  *   FIGHT_TENSION        { tension, phase, delta, atMs } — coalesced (D-035)
  *   FIGHT_PHASE_CHANGED  { phase, prevPhase, tension, atMs } — edge only (D-035)
  *   FIGHT_THRESHOLD_CROSSED { threshold, tension, atMs } — edge only (D-035)
@@ -68,7 +69,7 @@
  *   BITE_NIBBLE      — opens nibble-trap window
  *   BITE_THUD        — opens hookset window
  *   INPUT_ARROW_UP   — hookset trigger (tap during HOOKSET_WINDOW, D-082)
- *   INPUT_SPACEBAR   — Tactical Pump (tap during active fight, D-082)
+ *   INPUT_SPACEBAR   — Trophy Yank (tap during active fight, D-082)
  */
 
 import * as bus           from '../core/eventBus.js';
@@ -77,6 +78,7 @@ import * as inputAdapter  from '../core/inputAdapter.js';
 import * as stateStore    from '../core/stateStore.js';
 import * as modeRouter    from '../core/modeRouter.js';
 import * as equipment     from '../equipment/equipment.js';
+import * as rng           from '../core/rng.js';
 import {
   applyPressureEvent,
   recordLureRejection,
@@ -151,13 +153,7 @@ const SLACK_DANGER_THRESHOLD = 0.10;  // below this → warn about slack (hook s
 const INPUT_REEL_IN    = 'ARROW_DOWN'; // held = Reel In  (tension UP)
 const INPUT_GIVE_DRAG  = 'ARROW_UP';   // held = Give Drag (tension DOWN)
 const INPUT_HOOKSET    = 'ARROW_UP';   // tap  = Hookset during HOOKSET_WINDOW
-const INPUT_PUMP       = 'SPACEBAR';   // tap  = Tactical Pump
-
-/**
- * Stamina drain per Tactical Pump (D-082).
- * Equals 0.5× the stamina cost of one sustained 60ms reel tick (0.020 × 0.5).
- */
-const PUMP_STAMINA_DRAIN = 0.010;
+const INPUT_PUMP       = 'SPACEBAR';   // tap  = Trophy Yank (D-082)
 
 // ===========================================================================
 // Module state
@@ -181,7 +177,7 @@ let _hooksetInputUnsub = null;
 /** Unsub for the nibble-window input listener, or null. */
 let _nibbleInputUnsub = null;
 
-/** Unsub for the Tactical Pump SPACEBAR listener (active only during a fight). */
+/** Unsub for the Trophy Yank SPACEBAR listener (active only during a fight). */
 let _pumpUnsub = null;
 
 /** Fish instance awaiting hookset (between BITE_THUD and window expiry). */
@@ -196,6 +192,7 @@ let _pendingCastSpec = null;
  * @type {null | {
  *   fishInstance:      object,
  *   activeRodId:       string|null,
+ *   fightRng:          object,
  *   tension:           number,
  *   phase:             'RUNNING'|'TIRED',
  *   landingDistanceM:  number,
@@ -268,7 +265,7 @@ function _resolveFight(outcome, atMs) {
   _clearHooksetWindow();
   _clearNibbleWindow();
 
-  // Unsubscribe the Tactical Pump listener.
+  // Unsubscribe the Trophy Yank listener.
   if (_pumpUnsub !== null) {
     _pumpUnsub();
     _pumpUnsub = null;
@@ -337,9 +334,16 @@ function _startFight(fishInstance, atMs) {
   const tackle      = equipment.getActiveTackle();
   const activeRodId = tackle?.rods?.[0]?.id ?? null;
 
+  // Initialise per-fight Trophy Yank state (D-082).
+  fishInstance.trophyMultiplier = 1.0;
+
+  // Create a deterministic RNG stream for this fight (H-015, H-004).
+  const fightRng = rng.rngStream('fight');
+
   _fight = {
     fishInstance,
     activeRodId,
+    fightRng,
     tension:            0.50,  // start at mid-tension
     phase:              fishInstance.phase,  // from evaluateStrike → 'RUNNING'
     prevPhase:          fishInstance.phase,
@@ -362,10 +366,17 @@ function _startFight(fishInstance, atMs) {
     atMs,
   });
 
-  // D-080: narrative voice cue — the fight is now live.
-  bus.emit('STATE_ANNOUNCE', { token: 'TIME_TO_FIGHT', atMs });
+  // D-080: Deceptive Thud — compute InitialPull and emit the appropriate STRIKE_* token.
+  // styleMod: BULLDOG/THRASHER = 1.2, RUNNER/JUMPER = 1.0, DIVER = 0.8 (D-082, LOCKED v1.78).
+  const FIGHT_STYLE_MOD = { BULLDOG: 1.2, THRASHER: 1.2, RUNNER: 1.0, JUMPER: 1.0, DIVER: 0.8 };
+  const styleMod    = FIGHT_STYLE_MOD[fishInstance.fightStyle] ?? 1.0;
+  const initialPull = fishInstance.weightKg * styleMod * (0.8 + (fightRng.next() * 0.4));
+  const strikeToken = initialPull < 1.5  ? 'STRIKE_LIGHT'
+                    : initialPull >= 3.5 ? 'STRIKE_HEAVY'
+                    :                      'STRIKE_MODERATE';
+  bus.emit('STATE_ANNOUNCE', { token: strikeToken, atMs });
 
-  // Subscribe the Tactical Pump listener (D-082: SPACEBAR tap during fight).
+  // Subscribe the Trophy Yank listener (D-082: SPACEBAR tap during fight).
   _pumpUnsub = bus.on(`INPUT_${INPUT_PUMP}`, _onPump);
 
   // Start the fight tick.
@@ -373,20 +384,20 @@ function _startFight(fishInstance, atMs) {
 }
 
 // ===========================================================================
-// Tactical Pump (D-082)
+// Trophy Yank (D-082, v1.78)
 // ===========================================================================
 
 /**
- * Handle a Tactical Pump (SPACEBAR tap) during an active fight.
+ * Handle a Trophy Yank (SPACEBAR tap) during an active fight (D-082, v1.78).
  *
- * Effects (D-082):
- *   1. Stamina drain  — 0.5× the RUNNING reel-tick drain (PUMP_STAMINA_DRAIN).
- *   2. Phase Pressure — HOOKSET-class D-039 pressure event at the fish's tile.
- *   3. Rod wear       — equipment.damageItem(activeRodId, 'PUMP_WEAR')
- *                       (D-083: 'crooked_stick' is a silent no-op inside damageItem).
- *   4. Clock penalty  — clock.tick(1000) advances the tournament clock by 1s,
- *                       which fires ~16 fight ticks synchronously. All pump effects
- *                       are applied before the tick so they are visible to those ticks.
+ * Execution order (all effects applied before the clock penalty):
+ *   1. D-083 guard    — Crooked Stick is a complete no-op (no snap roll, no wear,
+ *                        no reward, no clock penalty).
+ *   2. Snap roll      — P_snap = 0.10 + (1 − currentDurabilityFraction).
+ *                        On failure: emit ROD_BROKEN, resolve fight as ROD_SNAPPED.
+ *   3. Cost           — equipment.damageItem(activeRodId, 'YANK_WEAR') (−0.10 durability).
+ *   4. Reward         — fishInstance.trophyMultiplier += 0.15 (additive stacking).
+ *   5. Penalty        — clock.tick(1000) advances tournament clock by 1 in-game second.
  *
  * @param {object} evt — INPUT_SPACEBAR payload { type, atMs, source }
  */
@@ -396,19 +407,41 @@ function _onPump(evt) {
   const f    = _fight;
   const atMs = evt.atMs ?? clock.nowMs();
 
-  // 1. Stamina drain (0.5× sustained reel tick, D-082).
-  f.fishInstance.stamina = Math.max(0, f.fishInstance.stamina - PUMP_STAMINA_DRAIN);
+  // 1. D-083: Crooked Stick is exempt from Trophy Yank — complete no-op.
+  if (f.activeRodId === 'crooked_stick') return;
 
-  // 2. Phase Pressure — HOOKSET-class event (D-039).
-  applyPressureEvent(f.fishInstance.coord, 'HOOKSET', atMs);
-
-  // 3. Rod wear — D-083 exemption for 'crooked_stick' is enforced inside damageItem.
+  // 2. Snap roll — applied before wear so a fresh rod still carries the 10% base risk.
+  let currentDurabilityFraction = 1.0;
   if (f.activeRodId) {
-    equipment.damageItem(f.activeRodId, 'PUMP_WEAR');
+    const state   = stateStore.getState();
+    const rodList = state.mode === 'TOURNAMENT_ACTIVE'
+      ? (state.tournament.activeTackle?.rods ?? [])
+      : (state.hub.inventory?.rods ?? []);
+    const rodEntry   = rodList.find(r => r.id === f.activeRodId);
+    const rodCatalog = equipment.getRod(f.activeRodId);
+    if (rodEntry && rodCatalog) {
+      currentDurabilityFraction = rodEntry.durability / rodCatalog.durability;
+    }
   }
 
-  // 4. Clock penalty — fire all fight ticks within the 1s window synchronously.
-  //    _fight may be null after this call if a terminal condition fires.
+  const roll   = f.fightRng.next();
+  const P_snap = 0.10 + (1.0 - currentDurabilityFraction);
+  if (roll < P_snap) {
+    bus.emit('ROD_BROKEN', { rodId: f.activeRodId, atMs });
+    _resolveFight('ROD_SNAPPED', atMs);
+    return;
+  }
+
+  // 3. Cost: rod wear (−0.10 maxDurability per yank).
+  if (f.activeRodId) {
+    equipment.damageItem(f.activeRodId, 'YANK_WEAR');
+  }
+
+  // 4. Reward: additive trophy multiplier (consumed by scoring.js on FISH_LANDED).
+  f.fishInstance.trophyMultiplier += 0.15;
+
+  // 5. Penalty: advance tournament clock by 1 in-game second.
+  //    _fight may be null after this call if a terminal condition fires inside the ticks.
   clock.tick(1000);
 }
 

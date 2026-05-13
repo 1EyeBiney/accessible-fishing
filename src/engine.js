@@ -64,6 +64,7 @@ import {
 } from './core/modeRouter.js';
 import * as profileStore from './profile/profileStore.js';
 import * as audioEngine  from './audio/audioEngine.js';
+import * as ttsQueue     from './audio/ttsQueue.js';
 import { registerUiManifests } from './ui/index.js';
 
 // ---------------------------------------------------------------------------
@@ -289,6 +290,11 @@ async function boot(opts = {}) {
   //
   // opts.volume (if provided) sets the initial master volume [0..1].
   audioEngine.init({ volume: opts.volume ?? 0.3, silent: opts.silent ?? false });
+
+  // H-022: Wire TTS preemption (D-021 single boot call).
+  // ttsQueue.init() registers bus subscriptions that cancel window.speechSynthesis
+  // whenever a high-priority tactical audio cue fires (BITE_*, FIGHT_*).
+  ttsQueue.init();
 
   // ── Step 4: Install CLI Keyboard Adapter ─────────────────────────────────
   // Translate raw terminal keypress events from process.stdin into properly

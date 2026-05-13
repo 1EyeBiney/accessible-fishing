@@ -1,0 +1,102 @@
+Thinking: I need to check the project brief to see how D-082 and D-080 are currently structured.
+Searched for regex D-080|D-082|brief_version (**/project_brief.md), 20 results. Files: c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md
+Thinking: I'm looking at the specific entries D-080 and D-082 in the project brief around lines 161-165 to understand what they contain.
+Read project_brief.md, lines 155 to 200
+Thinking: Now I have the full picture. Let me work through the math for Trophy Yank to evaluate the mechanics before making any adjustments—specifically looking at the survival probabilities and expected value given the durability cost, weight multiplier gains, and snap risk formula.
+Working through a fresh rod with maximum durability, I can see the snap probability increases by 10% with each tap as durability decreases, starting at 10% and reaching certainty by the tenth tap. This means the practical hard cap is nine successful taps before the rod is guaranteed to snap, giving a maximum weight multiplier of 135%.
+Now I'm calculating the cumulative success probabilities for reaching each milestone—the odds drop dramatically as I go deeper, with only about a 15% chance of surviving five taps and essentially zero chance of reaching nine. Looking at the expected value for different stopping strategies, stopping after just one tap gives an EV of 1.035, while attempting two taps drops to 0.936, and three taps falls further to 0.7308. So the optimal play is actually to stop after the first successful tap rather than risk losing the fish entirely.
+But there's a critical hidden cost I need to account for: when the rod snaps, it's not just that fish lost—the rod itself is permanently destroyed and requires purchasing a replacement, plus the time spent on the cast is wasted. This makes the true EV significantly worse than the naive math suggests, which means players will quickly learn that one pump is the rational limit.
+The real trap emerges when I consider a rod that's already worn down from previous use. If a rod has accumulated durability loss, the success rates for each tap would be even lower, making the EV calculation shift dramatically.
+Now I'm realizing there's an interaction problem with the Crooked Stick exemption: if that rod is exempt from durability wear and has infinite durability, the snap probability formula breaks because it's trying to calculate based on infinity, which would clamp the snap chance to zero and make pumping risk-free on that item.
+The cleanest fix is to make the Crooked Stick unable to use Trophy Yank at all, since the original Tactical Pump's stamina utility no longer exists anyway.
+For Deceptive Thud, the proposal is missing critical details — it doesn't specify the three band thresholds that map the initial pull value to announcement tokens, and without those boundaries the mechanic has no clear contract. The ±20% RNG variance is intentional to create the bluff effect, but the brief needs to explicitly declare those thresholds and clarify how the bands handle edge cases.
+I'm proposing concrete bands for the initial pull: light strikes below 1.5, moderate between 1.5 and 3.5, and heavy at 3.5 or above, though these will need playtesting to tune properly.
+There's also an unresolved interaction with the First-Tournament Safety modifier — I need to confirm whether the durability value in the snap probability formula is normalized as a fraction or an absolute value, since that changes how the 2.0× multiplier affects the calculation.
+The new Trophy Yank system is better for tournament balance than the old constant wear rate because it creates a bounded but variable edge for skilled players, with dramatic stochastic moments rather than a grinding fixed cap.
+For the update itself, I'm bumping the brief version and replacing Tactical Pump with Trophy Yank in D-082, adding the strike bands to D-080, and making three critical additions: exempting the Crooked Stick from Trophy Yank entirely, declaring the band thresholds explicitly, and clarifying that durability is normalized [0,1] in the snap formula.
+I need to update D-083 to reflect that the Crooked Stick is now fully exempt from Trophy Yank (spacebar becomes a no-op), and I should also update the index entry at line 306 that describes the old Tactical Pump mechanics. The audio coaching references in H-022 and H-023 still hold since the durability checks and state announcements survive the transition, so I'll leave those alone to keep this surgical.
+Let me also check the §12 reference to D-082 before I apply edits:
+Read project_brief.md, lines 300 to 320
+Thinking: Now I'm working through the evaluation of Trophy Yank's push-your-luck mechanics, calculating the snap probability curve and cumulative survival rates as durability decreases with each attempt.
+Looking at the expected value table, a single pump yields the only positive EV at +3.5%, while any additional pumps become strictly negative—this creates exactly the risk-reward tension the design intends.
+But there's a critical problem: Crooked Stick (D-083) declares infinite durability and exempts itself from wear, which breaks the formula entirely since the snap calculation would produce negative infinity and clamp to zero.  This creates an unbounded exploit where players can yank infinitely for free, so the Crooked Stick needs to be completely blocked from Trophy Yank mechanics.
+There are also three other issues to resolve: the Deceptive Thud bands lack specified InitialPull thresholds, the snap formula needs clarification on whether `currentDurability` is normalized or raw (since first-tournament rods with doubled max durability could trigger the same infinite-yank bug), and there's a design cliff where used rods at 50% durability become nearly worthless for yanking, which is mechanically sound but creates a steep learning curve.
+Looking at the Deceptive Thud overlap, the formula creates intentional asymmetry—a 2 lb BULLDOG fish can feel heavier than a 3 lb JUMPER due to fight-style modifiers and RNG variance, which rewards player expertise without locking out newcomers. I'm proposing concrete bands for the InitialPull thresholds to lock this behavior into the spec.
+The proposal hinges on three blocking issues being explicitly resolved: the Crooked Stick exemption, the Deceptive Thud bands, and normalizing durability to [0,1]. Now I'm executing the surgical update by replacing `TIME_TO_FIGHT` in D-080 with the three strike tokens, removing the Tactical Pump clause from D-082 in favor of Trophy Yank while preserving control reversal and mutex rules, and updating D-083 to reflect that PUMP_WEAR no longer exists.
+Updating the table rows now...
+Architectural Evaluation
+Trophy Yank — EV curve check
+Fresh rod (durability = 1.0). Snap on tap N: 0.10 + (1 − dur(N)), where dur(N) = 1.0 − 0.10·(N−1).
+Strategy Cumulative survival Reward mult EV multiplier
+0 pumps 1.000 1.00 1.000
+1 pump 0.900 1.15 1.035 ← unique positive-EV play
+2 pumps 0.720 1.30 0.936
+3 pumps 0.504 1.45 0.731
+4 pumps 0.302 1.60 0.484
+Tap 10 is deterministically fatal (dur = 0.10 → snap = 1.00). Hard cap = 9 successful taps. The curve is exactly the push-your-luck shape the design wants: rational players take one, gamblers chase variance.
+Deceptive Thud — overlap math
+InitialPull = fishWeight × fightStyleModifier × RNG(0.8, 1.2)
+2.0 lb BULLDOG (≈1.4 mod), high roll → 2.0 × 1.4 × 1.2 = **3.36**
+3.0 lb JUMPER (≈1.0 mod), low roll  → 3.0 × 1.0 × 0.8 = **2.40**
+→ The 2 lb fish "feels" stronger than the 3 lb fish. This is the intended bluff and it rewards species/fightStyle knowledge without locking out new players. Clean asymmetric-information design.
+Blocking math traps (must be closed before locking the brief)
+TRAP 1 — Crooked Stick (D-083) breaks the formula. crooked_stick.durability = Infinity → snap = 0.10 + (1 − ∞) = −∞ → clamp to 0 → infinite free Trophy Yanks → unbounded weight multiplier. Game-breaking exploit. Fix: Crooked Stick must be exempt from Trophy Yank entirely (SPACEBAR is a no-op on it).
+TRAP 2 — Deceptive Thud bands are undeclared. Three tokens are named but no InitialPull thresholds are given. Without bands, the engine has no contract. I'm locking these into the brief.
+TRAP 3 — `currentDurability` units must be normalized. H-023 doubles maxDurability to 2.0 on first tournament. If the formula uses raw durability, a fresh first-tournament rod gets snap = 0.10 + (1 − 2.0) = −0.90 → 0 → same infinite-yank exploit. Lock to fraction of `maxDurability`, range [0, 1].
+Non-blocking note
+A rod at 50% durability gives snap = 0.60 on the first yank → EV multiplier 0.46. That's the correct cost surface (rod maintenance matters), but it's a steep learning cliff — worth a follow-up audio-coaching cue. Not for this update.
+Verdict: Sound proposal. Executing the surgical update with the three traps closed.
+Replacing 1 lines with 1 lines in project_brief.md
+```
+```
+```
+```
+Now update D-080 (replace TIME_TO_FIGHT with the Deceptive Thud trio and declare the bands):
+Replacing 1 lines with 1 lines in project_brief.md
+```
+```
+```
+```
+Now update D-082 (Trophy Yank replaces Tactical Pump):
+Replacing 1 lines with 1 lines in project_brief.md
+```
+```
+```
+```
+Now D-083 (update the Crooked Stick exemption to reference Trophy Yank instead of PUMP_WEAR), and the §12 index rows for D-080 and D-082:
+Replacing 3 lines with 3 lines in project_brief.md
+```
+```
+```
+```
+Let me also verify the H-022 reference to ROD_STRAINED / ROD_BROKEN still reads correctly (no edit needed — those tokens still exist) and run a final sanity grep:
+Searched for regex TIME_TO_FIGHT|PUMP_WEAR|Tactical Pump|PUMP_STAMINA_DRAIN|PUMP_PHASE_PRESSURE (**/project_brief.md), 15 results. Files: c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md
+Thinking: I need to update the Phase 1 test targets on lines 321-323 to replace the old Tactical Pump references with Trophy Yank equivalents, adjusting the harness names and wear metrics accordingly.
+Three downstream Phase-1 test-target lines still reference the repealed Tactical Pump symbols — those are derivatives of D-082 and need to follow the rename or they'll mislead the test harness work. Updating them:
+Replacing 3 lines with 3 lines in project_brief.md
+```
+```
+```
+```
+Final sanity check — confirm no live references to the repealed tokens remain (only inside the explicit REPEALED clauses):
+Searched for regex PUMP_WEAR|TIME_TO_FIGHT|PUMP_STAMINA_DRAIN|PUMP_PHASE_PRESSURE|Tactical Pump (**/project_brief.md), 12 results. Files: c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md
+All remaining matches are inside intentional REPEALED clauses or historical citations. Brief is consistent at v1.78.
+Summary of Surgical Update
+Section Change
+Header brief_version: 1.17 → 1.78
+D-080 Repealed TIME_TO_FIGHT; added Deceptive Thud trio STRIKE_LIGHT / STRIKE_MODERATE / STRIKE_HEAVY selected via InitialPull = fishWeight × fightStyleModifier × RNG(0.8, 1.2). Bands locked: &lt; 1.5 / 1.5–3.5 / ≥ 3.5. RNG sub-stream &#39;fight&#39; declared for H-004 determinism.
+D-082 Repealed Tactical Pump (
+PUMP_WEAR (c:\nbs\afish\src\equipment\equipment.js:917)
+,
+PUMP_STAMINA_DRAIN (c:\nbs\afish\src\fish\fightLoop.js:160)
+, PUMP_PHASE_PRESSURE). Replaced with Trophy Yank: YANK_WEAR_PER_TAP = 0.10 + YANK_REWARD_PER_TAP = 0.15 multiplicative trophyMultiplier + 1 s clock + immediate snap roll P_snap = 0.10 + (1 − currentDurabilityFraction). currentDurabilityFraction locked to **normalized [0,1] as
+rodEntry.durability / rodCatalog.durability (c:\nbs\afish\src\fish\fightLoop.js:581)
+** (closes the H-023 first-tournament exploit). Failed roll → ROD_SNAPPED, fish lost, trophy discarded. |
+| D-083 | Updated Crooked Stick exemption: SPACEBAR is now a complete no-op on crooked_stick — no wear, no reward, no snap roll, no clock, no announce. Closes the
+durability: Infinity → P_snap = 0 (c:\nbs\afish\src\equipment\equipment.js:88)
+exploit. |
+| §12 D-080 row | Index updated with Deceptive Thud trio and band thresholds. |
+| §12 D-082 row | Index updated with Trophy Yank symbols and snap formula. |
+| §12 Phase 1 tests 3–5 | Test targets rewritten for Trophy Yank: seeded
+rngStream('fight') (c:\nbs\afish\src\fish\fishBehavior.js:1097)
+for snap-roll determinism, trophyMultiplier assertions, Crooked Stick complete-no-op assertion. |

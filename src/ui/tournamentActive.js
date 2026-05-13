@@ -298,8 +298,25 @@ function _onBiteNibble() {
   _announce("Nibble detected — get ready!");
 }
 
-function _onBiteThud() {
-  _announce("Hookset! Press Up Arrow now!");
+/**
+ * STATE_ANNOUNCE handler (v1.82 Audio-Logic Bridge).
+ * Maps engine state tokens to player-facing spoken strings.
+ * Tokens not in the table are silently ignored to stay forward-compatible.
+ *
+ * @param {{ token: string, atMs: number }} payload
+ */
+function _onStateAnnounce(payload) {
+  const STATE_TEXT = {
+    STRIKE_LIGHT:    'Light tug.',
+    STRIKE_MODERATE: 'Solid hit!',
+    STRIKE_HEAVY:    'HEAVY STRIKE! Get ready!',
+    ROD_STRAINED:    'Rod is straining! Careful!',
+    ROD_BROKEN:      'CRACK! The rod snapped!',
+    LURE_RETRIEVED:  'Lure retrieved.',
+    LINE_RIPPED:     'Line ripped back.',
+  };
+  const text = STATE_TEXT[payload?.token];
+  if (text) _announce(text);
 }
 
 function _onHooksetMissed() {
@@ -488,8 +505,10 @@ export const tournamentActiveManifest = {
 
       // ── Bite sequence ────────────────────────────────────────────────────
       bus.on('BITE_NIBBLE',            _onBiteNibble),
-      bus.on('BITE_THUD',              _onBiteThud),
       bus.on('HOOKSET_MISSED',         _onHooksetMissed),
+
+      // ── State announcer (v1.82 Audio-Logic Bridge) ───────────────────────
+      bus.on('STATE_ANNOUNCE',         _onStateAnnounce),
       bus.on('FISH_HOOKED',            _onFishHooked),
 
       // ── Fight progression ─────────────────────────────────────────────────

@@ -914,7 +914,7 @@ const DURABILITY_LOSS = Object.freeze({
     cast:      0.005,   // rods are durable; normal casting wear is negligible
     catch:     0.020,   // landing a fish stresses the blank
     snag:      0.010,   // snagged, pulled free
-    PUMP_WEAR: 0.010,   // D-082: Tactical Pump rod stress (1% of maxDurability per pump)
+    YANK_WEAR: 0.10,    // D-082: Trophy Yank rod stress (10% of maxDurability per tap)
   }),
   lure: Object.freeze({
     cast:    0.003,  // minor finish wear per cast
@@ -1247,7 +1247,7 @@ export function getBait(id) {
  *   'catch'     — successful catch (stresses rod; dings lure trebles)
  *   'snag'      — lure dragged through structure; major lure damage
  *   'time'      — passive time-based decay (bait only; called by clock.every handler)
- *   'PUMP_WEAR' — D-082 Tactical Pump: deducts 0.01 × maxDurability from rod (rods only)
+ *   'YANK_WEAR' — D-082 Trophy Yank: deducts 0.10 × maxDurability from rod (rods only)
  *
  * D-083 safety net: if id === 'crooked_stick', this function is a silent no-op.
  *
@@ -1447,8 +1447,8 @@ function _damageVigor(baitId, kind) {
  * Computes and dispatches a durability reduction for a rod or lure.
  * @param {string} id
  * @param {'rod'|'lure'} itemType
- * @param {string} kind — 'cast' | 'hookset' | 'catch' | 'snag' | 'PUMP_WEAR'
- *   PUMP_WEAR is rod-only (D-082). Lures silently skip unknown kinds (lossTable[kind] ?? 0).
+ * @param {string} kind — 'cast' | 'hookset' | 'catch' | 'snag' | 'YANK_WEAR'
+ *   YANK_WEAR is rod-only (D-082). Lures silently skip unknown kinds (lossTable[kind] ?? 0).
  */
 function _damageDurability(id, itemType, kind) {
   const lossTable = DURABILITY_LOSS[itemType];
