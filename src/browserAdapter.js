@@ -278,7 +278,11 @@ async function _handleStartClick() {
     // ── Step 2: Boot the engine ───────────────────────────────────────────
     // boot() is async (profile I/O).  It will call audioEngine.init() a
     // second time; that call is a safe no-op (idempotent guard in audioEngine).
-    await boot({ silent: false });
+    //
+    // D-084: Read ?dev=1 from the URL and forward it so diagnostics.init()
+    // arms the F2/F3 handlers.  Any value other than '1' keeps dev mode off.
+    const _isDev = new URLSearchParams(window.location.search).get('dev') === '1';
+    await boot({ silent: false, dev: _isDev });
 
     // ── Step 3: Enable keyboard routing ───────────────────────────────────
     _engineReady = true;
