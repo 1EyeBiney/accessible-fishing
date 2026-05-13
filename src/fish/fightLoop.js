@@ -19,16 +19,27 @@
  *   • Terminal conditions (D-036) — LINE_SNAPPED, HOOK_SHAKEN, FISH_LANDED.
  *
  * Decisions implemented:
- *   D-031 — Reel + Drag mutex: if both held simultaneously, tension stays fixed
- *            (neither add nor subtract). Fish pull still applies.
+ *   D-031 — Idle Decay mutex: if ARROW_DOWN and ARROW_UP both held simultaneously,
+ *            player tension contribution cancels out; fish pull toward equilibrium
+ *            still applies (RUNNING phase drifts tension UP, TIRED phase DOWN).
  *   D-033 — Hookset window shrinks with species intelligence (min 300ms, D-050).
  *   D-034 — Fight tick = 60ms via clock.every. Reads inputAdapter.isHeld().
  *   D-035 — FIGHT_TENSION coalesced: emit only when |delta| > 0.02 OR gap ≥ 250ms.
  *   D-036 — tension ≥ 1.0 → LINE_SNAPPED (immediate).
  *            tension ≤ 0 for > 1500ms continuously → HOOK_SHAKEN.
  *            landingDistance ≤ 0.5 → FISH_LANDED.
- *   D-039 — Pressure events: HOOKSET +1 on every hookset attempt, CATCH +1 on land.
+ *            rod durability ≤ 0 → ROD_BROKEN + ROD_SNAPPED.
+ *   D-039 — Pressure events: HOOKSET +1 on every hookset attempt, CATCH +1 on land,
+ *            HOOKSET +1 per Tactical Pump (Phase Pressure).
  *   D-049 — Lure rejection recorded on hookset miss and on hook-shake.
+ *   D-080 — STATE_ANNOUNCE { token: 'TIME_TO_FIGHT' } emitted on successful hookset.
+ *   D-082 — Ergonomic Reversal (LOCKED):
+ *            ARROW_DOWN (held) = Reel In (tension UP).
+ *            ARROW_UP   (held) = Give Drag (tension DOWN).
+ *            SPACEBAR   (tap)  = Tactical Pump: 1s clock penalty + stamina drain +
+ *                                Phase Pressure + PUMP_WEAR on rod (D-082).
+ *            ARROW_UP   (tap)  = Hookset trigger during HOOKSET_WINDOW.
+ *   D-083 — Crooked Stick exemption: handled by equipment.damageItem no-op.
  *
  * H-005 compliance:
  *   All clock handles and bus subscriptions are cancelled in onUnmount.
@@ -42,17 +53,22 @@
  *   HOOKSET_ATTEMPTED    { hit: false, fishInstance, atMs }
  *   HOOKSET_MISSED       { fishInstance, lureId, coordKey, atMs }
  *   FISH_HOOKED          { fishInstance, startTension, atMs }
+ *   STATE_ANNOUNCE       { token: 'TIME_TO_FIGHT', atMs } — D-080
  *   FIGHT_TENSION        { tension, phase, delta, atMs } — coalesced (D-035)
  *   FIGHT_PHASE_CHANGED  { phase, prevPhase, tension, atMs } — edge only (D-035)
  *   FIGHT_THRESHOLD_CROSSED { threshold, tension, atMs } — edge only (D-035)
  *                           threshold ∈ SLACK_DANGER | SNAP_DANGER | LINE_SNAPPED | SLACK_LOST
+ *   ROD_STRAINED         { rodId, durability, atMs } — once per fight, < 25% durability (D-036)
+ *   ROD_BROKEN           { rodId, atMs } — durability ≤ 0 (D-036)
  *   FIGHT_RESOLVED       { outcome, fishInstance, atMs }
- *                           outcome ∈ FISH_LANDED | LINE_SNAPPED | HOOK_SHAKEN
+ *                           outcome ∈ FISH_LANDED | LINE_SNAPPED | HOOK_SHAKEN | ROD_SNAPPED
  *   BITE_CANCELLED       { reason, speciesId, poiId, lureId, atMs }
  *
  * Events consumed:
- *   BITE_NIBBLE — opens nibble-trap window
- *   BITE_THUD   — opens hookset window
+ *   BITE_NIBBLE      — opens nibble-trap window
+ *   BITE_THUD        — opens hookset window
+ *   INPUT_ARROW_UP   — hookset trigger (tap during HOOKSET_WINDOW, D-082)
+ *   INPUT_SPACEBAR   — Tactical Pump (tap during active fight, D-082)
  */
 
 import * as bus           from '../core/eventBus.js';
@@ -60,6 +76,7 @@ import * as clock         from '../core/clock.js';
 import * as inputAdapter  from '../core/inputAdapter.js';
 import * as stateStore    from '../core/stateStore.js';
 import * as modeRouter    from '../core/modeRouter.js';
+import * as equipment     from '../equipment/equipment.js';
 import {
   applyPressureEvent,
   recordLureRejection,
@@ -130,10 +147,17 @@ const TENSION_EMIT_MAX_GAP_MS = 250;
 const SNAP_DANGER_THRESHOLD  = 0.85;  // above this → warn about snap risk
 const SLACK_DANGER_THRESHOLD = 0.10;  // below this → warn about slack (hook shake risk)
 
-// ── Input identifiers ─────────────────────────────────────────────────────────
-const INPUT_REEL = 'SPACEBAR';
-const INPUT_DRAG = 'ARROW_DOWN';
-const INPUT_HOOKSET = 'ARROW_UP_DOWN'; // The up-down pull motion edge (D-033)
+// ── Input identifiers (D-082, LOCKED) ────────────────────────────────────────────
+const INPUT_REEL_IN    = 'ARROW_DOWN'; // held = Reel In  (tension UP)
+const INPUT_GIVE_DRAG  = 'ARROW_UP';   // held = Give Drag (tension DOWN)
+const INPUT_HOOKSET    = 'ARROW_UP';   // tap  = Hookset during HOOKSET_WINDOW
+const INPUT_PUMP       = 'SPACEBAR';   // tap  = Tactical Pump
+
+/**
+ * Stamina drain per Tactical Pump (D-082).
+ * Equals 0.5× the stamina cost of one sustained 60ms reel tick (0.020 × 0.5).
+ */
+const PUMP_STAMINA_DRAIN = 0.010;
 
 // ===========================================================================
 // Module state
@@ -157,6 +181,9 @@ let _hooksetInputUnsub = null;
 /** Unsub for the nibble-window input listener, or null. */
 let _nibbleInputUnsub = null;
 
+/** Unsub for the Tactical Pump SPACEBAR listener (active only during a fight). */
+let _pumpUnsub = null;
+
 /** Fish instance awaiting hookset (between BITE_THUD and window expiry). */
 let _pendingFishInstance = null;
 
@@ -168,6 +195,7 @@ let _pendingCastSpec = null;
  *
  * @type {null | {
  *   fishInstance:      object,
+ *   activeRodId:       string|null,
  *   tension:           number,
  *   phase:             'RUNNING'|'TIRED',
  *   landingDistanceM:  number,
@@ -175,6 +203,7 @@ let _pendingCastSpec = null;
  *   lastTensionEmitMs: number,
  *   lastEmittedTension:number,
  *   prevPhase:         'RUNNING'|'TIRED',
+ *   rodStrainedFired:  boolean,
  *   thresholdFlags: {
  *     slackDanger: boolean,
  *     snapDanger:  boolean,
@@ -227,7 +256,7 @@ function _clearFightTick() {
  * Emits FIGHT_RESOLVED, applies pressure (CATCH on land), records rejection
  * on loss (D-049), dispatches SCAN_UNLOCKED so the scan phase can resume.
  *
- * @param {'FISH_LANDED'|'LINE_SNAPPED'|'HOOK_SHAKEN'} outcome
+ * @param {'FISH_LANDED'|'LINE_SNAPPED'|'HOOK_SHAKEN'|'ROD_SNAPPED'} outcome
  * @param {number} atMs
  */
 function _resolveFight(outcome, atMs) {
@@ -238,6 +267,12 @@ function _resolveFight(outcome, atMs) {
   _clearFightTick();
   _clearHooksetWindow();
   _clearNibbleWindow();
+
+  // Unsubscribe the Tactical Pump listener.
+  if (_pumpUnsub !== null) {
+    _pumpUnsub();
+    _pumpUnsub = null;
+  }
 
   // Pressure event for catch (D-039: CATCH +1).
   if (outcome === 'FISH_LANDED') {
@@ -298,8 +333,13 @@ function _startFight(fishInstance, atMs) {
     Math.max(5.0, BASE_LANDING_DISTANCE_M * (fishInstance.weightKg / 1.5))
   );
 
+  // Capture the active rod id so durability can be checked / damaged each tick (D-082, D-083).
+  const tackle      = equipment.getActiveTackle();
+  const activeRodId = tackle?.rods?.[0]?.id ?? null;
+
   _fight = {
     fishInstance,
+    activeRodId,
     tension:            0.50,  // start at mid-tension
     phase:              fishInstance.phase,  // from evaluateStrike → 'RUNNING'
     prevPhase:          fishInstance.phase,
@@ -307,6 +347,7 @@ function _startFight(fishInstance, atMs) {
     slackStartMs:       null,
     lastTensionEmitMs:  atMs,
     lastEmittedTension: 0.50,
+    rodStrainedFired:   false,  // D-036: ROD_STRAINED fires once per fight
     thresholdFlags: {
       slackDanger: false,
       snapDanger:  false,
@@ -321,8 +362,54 @@ function _startFight(fishInstance, atMs) {
     atMs,
   });
 
+  // D-080: narrative voice cue — the fight is now live.
+  bus.emit('STATE_ANNOUNCE', { token: 'TIME_TO_FIGHT', atMs });
+
+  // Subscribe the Tactical Pump listener (D-082: SPACEBAR tap during fight).
+  _pumpUnsub = bus.on(`INPUT_${INPUT_PUMP}`, _onPump);
+
   // Start the fight tick.
   _tickHandle = clock.every(FIGHT_TICK_MS, _onFightTick);
+}
+
+// ===========================================================================
+// Tactical Pump (D-082)
+// ===========================================================================
+
+/**
+ * Handle a Tactical Pump (SPACEBAR tap) during an active fight.
+ *
+ * Effects (D-082):
+ *   1. Stamina drain  — 0.5× the RUNNING reel-tick drain (PUMP_STAMINA_DRAIN).
+ *   2. Phase Pressure — HOOKSET-class D-039 pressure event at the fish's tile.
+ *   3. Rod wear       — equipment.damageItem(activeRodId, 'PUMP_WEAR')
+ *                       (D-083: 'crooked_stick' is a silent no-op inside damageItem).
+ *   4. Clock penalty  — clock.tick(1000) advances the tournament clock by 1s,
+ *                       which fires ~16 fight ticks synchronously. All pump effects
+ *                       are applied before the tick so they are visible to those ticks.
+ *
+ * @param {object} evt — INPUT_SPACEBAR payload { type, atMs, source }
+ */
+function _onPump(evt) {
+  if (!_fight) return;
+
+  const f    = _fight;
+  const atMs = evt.atMs ?? clock.nowMs();
+
+  // 1. Stamina drain (0.5× sustained reel tick, D-082).
+  f.fishInstance.stamina = Math.max(0, f.fishInstance.stamina - PUMP_STAMINA_DRAIN);
+
+  // 2. Phase Pressure — HOOKSET-class event (D-039).
+  applyPressureEvent(f.fishInstance.coord, 'HOOKSET', atMs);
+
+  // 3. Rod wear — D-083 exemption for 'crooked_stick' is enforced inside damageItem.
+  if (f.activeRodId) {
+    equipment.damageItem(f.activeRodId, 'PUMP_WEAR');
+  }
+
+  // 4. Clock penalty — fire all fight ticks within the 1s window synchronously.
+  //    _fight may be null after this call if a terminal condition fires.
+  clock.tick(1000);
 }
 
 // ===========================================================================
@@ -377,7 +464,7 @@ function _onBiteNibble(evt) {
 
 /**
  * Handle BITE_THUD — fish has committed, open the hookset window.
- * Applies HOOKSET pressure (+1). Watches for INPUT_ARROW_UP_DOWN edge.
+ * Applies HOOKSET pressure (+1). Watches for INPUT_ARROW_UP tap (D-082: hookset trigger).
  *
  * @param {object} evt - BITE_THUD payload
  */
@@ -396,9 +483,10 @@ function _onBiteThud(evt) {
   bus.emit('HOOKSET_ATTEMPTED', { hit: false, fishInstance, atMs });
 
   // Open the hookset input window.
-  _hooksetInputUnsub = bus.on('INPUT_ACTION', (inputEvt) => {
-    if (inputEvt.type !== INPUT_HOOKSET) return;
-    // Correct input within the window → start fight.
+  // D-082: ARROW_UP tap = hookset trigger. Listens on the specific INPUT_ARROW_UP
+  // channel emitted by inputAdapter._emitTap('ARROW_UP', ...).
+  _hooksetInputUnsub = bus.on(`INPUT_${INPUT_HOOKSET}`, (inputEvt) => {
+    // Any ARROW_UP tap within the window → start fight.
     _clearHooksetWindow();
     _startFight(fishInstance, inputEvt.atMs ?? clock.nowMs());
   });
@@ -430,10 +518,12 @@ function _onFightTick(atMs) {
   const f = _fight;
   const { fishInstance } = f;
 
-  // ── 1. Read input ──────────────────────────────────────────────────────────
-  const reeling    = inputAdapter.isHeld(INPUT_REEL);
-  const givingDrag = inputAdapter.isHeld(INPUT_DRAG);
-  // Mutex (D-031): both held simultaneously → no tension change from player input.
+  // ── 1. Read input (D-082) ─────────────────────────────────────────────────
+  const reeling    = inputAdapter.isHeld(INPUT_REEL_IN);    // ARROW_DOWN held
+  const givingDrag = inputAdapter.isHeld(INPUT_GIVE_DRAG);  // ARROW_UP held
+  // Idle Decay mutex (D-082, D-031): both held simultaneously → player tension
+  // contributions cancel; fish-pull-toward-equilibrium still applies so
+  // RUNNING drifts tension UP and TIRED drifts tension DOWN naturally.
   const mutex      = reeling && givingDrag;
 
   // ── 2. Advance fish FSM ────────────────────────────────────────────────────
@@ -478,13 +568,34 @@ function _onFightTick(atMs) {
   }
 
   // ── 5. Terminal conditions (D-036) ─────────────────────────────────────────
-  // a) Line snap
+  // 5a) Rod durability — checked every tick (wear applied by _onPump, D-082/D-036).
+  if (f.activeRodId) {
+    const rodTackle = equipment.getActiveTackle();
+    const rodEntry  = rodTackle?.rods?.find(r => r.id === f.activeRodId);
+    if (rodEntry) {
+      const rodDef = equipment.getRod(f.activeRodId);
+      const maxDur = rodDef.durability; // catalog value = max (always 1.0 for standard rods)
+
+      if (!f.rodStrainedFired && rodEntry.durability < 0.25 * maxDur) {
+        f.rodStrainedFired = true;
+        bus.emit('ROD_STRAINED', { rodId: f.activeRodId, durability: rodEntry.durability, atMs });
+      }
+
+      if (rodEntry.durability <= 0) {
+        bus.emit('ROD_BROKEN', { rodId: f.activeRodId, atMs });
+        _resolveFight('ROD_SNAPPED', atMs);
+        return;
+      }
+    }
+  }
+
+  // 5b) Line snap — tension at ceiling
   if (newTension >= 1.0) {
     _resolveFight('LINE_SNAPPED', atMs);
     return;
   }
 
-  // b) Hook shake — tension at floor continuously for SLACK_GRACE_MS
+  // 5c) Hook shake — tension at floor continuously for SLACK_GRACE_MS
   if (newTension <= 0) {
     if (f.slackStartMs === null) {
       f.slackStartMs = atMs;
@@ -496,7 +607,7 @@ function _onFightTick(atMs) {
     f.slackStartMs = null;
   }
 
-  // c) Fish landed
+  // 5d) Fish landed
   if (f.landingDistanceM <= LANDED_THRESHOLD) {
     _resolveFight('FISH_LANDED', atMs);
     return;
@@ -579,9 +690,15 @@ modeRouter.registerMountManifest({
   },
 
   onUnmount(_prevMode, _nextMode) {
-    // If a fight is in progress, resolve it as hook-shaken.
+    // If a fight is in progress, resolve it as hook-shaken (cleans up _pumpUnsub too).
     if (_fight) {
       _resolveFight('HOOK_SHAKEN', clock.nowMs());
+    }
+
+    // Safety net: clear pump unsub if somehow not already cleared.
+    if (_pumpUnsub !== null) {
+      _pumpUnsub();
+      _pumpUnsub = null;
     }
 
     // Cancel all pending windows and the tick.

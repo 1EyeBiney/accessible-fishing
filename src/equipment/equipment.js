@@ -911,9 +911,10 @@ const BAIT_CATALOG = Object.freeze({
 
 const DURABILITY_LOSS = Object.freeze({
   rod: Object.freeze({
-    cast:    0.005,  // rods are durable; normal casting wear is negligible
-    catch:   0.020,  // landing a fish stresses the blank
-    snag:    0.010,  // snagged, pulled free
+    cast:      0.005,   // rods are durable; normal casting wear is negligible
+    catch:     0.020,   // landing a fish stresses the blank
+    snag:      0.010,   // snagged, pulled free
+    PUMP_WEAR: 0.010,   // D-082: Tactical Pump rod stress (1% of maxDurability per pump)
   }),
   lure: Object.freeze({
     cast:    0.003,  // minor finish wear per cast
@@ -1240,12 +1241,15 @@ export function getBait(id) {
  *
  * For live bait items the `kind` maps to vigor loss (D-051); for rods and lures
  * it maps to durability loss. Supported `kind` values:
- *   'cast'    — each cast deducts wear
- *   'nibble'  — fish nibble during retrieve/soak (bait only)
- *   'hookset' — hookset attempt (bait loses more than cast; rods/lures minor)
- *   'catch'   — successful catch (stresses rod; dings lure trebles)
- *   'snag'    — lure dragged through structure; major lure damage
- *   'time'    — passive time-based decay (bait only; called by clock.every handler)
+ *   'cast'      — each cast deducts wear
+ *   'nibble'    — fish nibble during retrieve/soak (bait only)
+ *   'hookset'   — hookset attempt (bait loses more than cast; rods/lures minor)
+ *   'catch'     — successful catch (stresses rod; dings lure trebles)
+ *   'snag'      — lure dragged through structure; major lure damage
+ *   'time'      — passive time-based decay (bait only; called by clock.every handler)
+ *   'PUMP_WEAR' — D-082 Tactical Pump: deducts 0.01 × maxDurability from rod (rods only)
+ *
+ * D-083 safety net: if id === 'crooked_stick', this function is a silent no-op.
  *
  * Durability and vigor floor at 0 (handled by reducer clamp / Math.max).
  * A rod at 0 durability or bait at 0 vigor stays in its slot — NOT auto-replaced (H-017).
@@ -1254,6 +1258,8 @@ export function getBait(id) {
  * @param {string} kind — damage kind (see above)
  */
 export function damageItem(id, kind) {
+  // D-083: crooked_stick is exempt from all durability wear (any kind).
+  if (id === 'crooked_stick') return;
   // Live bait: vigor path
   if (BAIT_CATALOG[id]) {
     _damageVigor(id, kind);
@@ -1441,7 +1447,8 @@ function _damageVigor(baitId, kind) {
  * Computes and dispatches a durability reduction for a rod or lure.
  * @param {string} id
  * @param {'rod'|'lure'} itemType
- * @param {string} kind — 'cast' | 'hookset' | 'catch' | 'snag'
+ * @param {string} kind — 'cast' | 'hookset' | 'catch' | 'snag' | 'PUMP_WEAR'
+ *   PUMP_WEAR is rod-only (D-082). Lures silently skip unknown kinds (lossTable[kind] ?? 0).
  */
 function _damageDurability(id, itemType, kind) {
   const lossTable = DURABILITY_LOSS[itemType];
