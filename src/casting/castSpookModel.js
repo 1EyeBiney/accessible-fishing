@@ -102,6 +102,86 @@ export function readSpook(coord, atMs) {
 }
 
 /**
+ * Diagnostic variant of readSpook (D-084).
+ * Returns a detail object with the raw stored level, the decayed effective level,
+ * the age of the last write, and the configured half-life — WITHOUT mutating tile
+ * state. Called exclusively by src/dev/diagnostics.js for F2 inspection output.
+ *
+ * Read-only invariant: this function NEVER calls worldMap.mutateTileState,
+ * NEVER emits bus events, and NEVER advances the RNG (H-004, H-015 safe).
+ *
+ * @param {{ x: number, y: number } | string} coord — tile coord object or "x,y" key
+ * @param {number}                            atMs  — current tournament-clock time in ms
+ * @returns {{ baseSpook: number, decayedSpook: number, decayHalfLifeMs: number, ageMs: number }}
+ */
+export function readSpookDetail(coord, atMs) {
+  let tile;
+  try {
+    tile = worldMap.getTile(coord);
+  } catch {
+    return { baseSpook: 0, decayedSpook: 0, decayHalfLifeMs: SPOOK_DECAY_MS_PER_LEVEL, ageMs: 0 };
+  }
+
+  if (!tile) {
+    return { baseSpook: 0, decayedSpook: 0, decayHalfLifeMs: SPOOK_DECAY_MS_PER_LEVEL, ageMs: 0 };
+  }
+
+  const spook       = tile.state?.spook;
+  const baseSpook   = (spook && typeof spook.level === 'number') ? spook.level : 0;
+  const updatedAtMs = spook?.updatedAtMs ?? 0;
+  const ageMs       = Math.max(0, atMs - updatedAtMs);
+  const decayed     = Math.floor(ageMs / SPOOK_DECAY_MS_PER_LEVEL);
+  const decayedSpook = Math.max(0, baseSpook - decayed);
+
+  return {
+    baseSpook,
+    decayedSpook,
+    decayHalfLifeMs: SPOOK_DECAY_MS_PER_LEVEL,
+    ageMs,
+  };
+}
+
+/**
+ * Diagnostic variant of readSpook (D-084).
+ * Returns a detail object with the raw stored level, the decayed effective level,
+ * the age of the last write, and the configured half-life — WITHOUT mutating tile
+ * state. Called exclusively by src/dev/diagnostics.js for F2 inspection output.
+ *
+ * Read-only invariant: this function NEVER calls worldMap.mutateTileState,
+ * NEVER emits bus events, and NEVER advances the RNG (H-004, H-015 safe).
+ *
+ * @param {{ x: number, y: number } | string} coord — tile coord object or "x,y" key
+ * @param {number}                            atMs  — current tournament-clock time in ms
+ * @returns {{ baseSpook: number, decayedSpook: number, decayHalfLifeMs: number, ageMs: number }}
+ */
+export function readSpookDetail(coord, atMs) {
+  let tile;
+  try {
+    tile = worldMap.getTile(coord);
+  } catch {
+    return { baseSpook: 0, decayedSpook: 0, decayHalfLifeMs: SPOOK_DECAY_MS_PER_LEVEL, ageMs: 0 };
+  }
+
+  if (!tile) {
+    return { baseSpook: 0, decayedSpook: 0, decayHalfLifeMs: SPOOK_DECAY_MS_PER_LEVEL, ageMs: 0 };
+  }
+
+  const spook       = tile.state?.spook;
+  const baseSpook   = (spook && typeof spook.level === 'number') ? spook.level : 0;
+  const updatedAtMs = spook?.updatedAtMs ?? 0;
+  const ageMs       = Math.max(0, atMs - updatedAtMs);
+  const decayed     = Math.floor(ageMs / SPOOK_DECAY_MS_PER_LEVEL);
+  const decayedSpook = Math.max(0, baseSpook - decayed);
+
+  return {
+    baseSpook,
+    decayedSpook,
+    decayHalfLifeMs: SPOOK_DECAY_MS_PER_LEVEL,
+    ageMs,
+  };
+}
+
+/**
  * Apply a cast splash to the given tile, adding the appropriate spook increment
  * and persisting the new stored level via worldMap.mutateTileState (H-003).
  *

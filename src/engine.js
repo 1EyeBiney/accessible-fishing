@@ -65,6 +65,7 @@ import {
 import * as profileStore from './profile/profileStore.js';
 import * as audioEngine  from './audio/audioEngine.js';
 import * as ttsQueue     from './audio/ttsQueue.js';
+import * as diagnostics  from './dev/diagnostics.js';
 import { registerUiManifests } from './ui/index.js';
 
 // ---------------------------------------------------------------------------
@@ -295,6 +296,9 @@ async function boot(opts = {}) {
   // ttsQueue.init() registers bus subscriptions that cancel window.speechSynthesis
   // whenever a high-priority tactical audio cue fires (BITE_*, FIGHT_*).
   ttsQueue.init();
+
+  // D-084: X-Ray Vision dev diagnostics — fully dormant unless opts.dev === true.
+  diagnostics.init(opts?.dev === true);
 
   // ── Step 4: Install CLI Keyboard Adapter ─────────────────────────────────
   // Translate raw terminal keypress events from process.stdin into properly

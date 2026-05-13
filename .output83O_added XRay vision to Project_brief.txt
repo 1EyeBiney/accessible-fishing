@@ -1,0 +1,39 @@
+Thinking: I'm starting by examining the project_brief.md file to understand how it's organized.
+Searched for regex brief_version|^## |^D-08|H-021|accessibleConsole (**/project_brief.md), 20 results. Files: c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md
+Searched for regex ^- D-08[0-3]|^- D-079 (**/project_brief.md), no results
+Searched for regex D-08[0-9] (**/project_brief.md), 20 results. Files: c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md, c:\nbs\afish\project_brief.md
+Thinking: I've got the context I need—D-083 is the latest decision, so I'll insert D-084 right after it. Let me check the area around line 165 to find the right spot for a clean insertion.
+Read project_brief.md, lines 1 to 10
+Read project_brief.md, lines 163 to 170
+Now I have what I need. Let me execute both edits: bump the version and insert D-084 after D-083.
+Replacing 2 lines with 3 lines in project_brief.md
+```
+```
+```
+```
+Architectural Evaluation — APPROVED
+The proposal is sound and violates no current invariants, provided the following constraints are honored (now formalized in D-084):
+Invariant Risk Resolution
+D-013 Continuous Real-Time Clock Pausing breaks decay/clock math ✅ Engine-pause explicitly banned; F2/F3 are non-blocking observers
+D-010 Input routing Raw key reads fragment input layer ✅ F2/F3 mapped at
+inputAdapter.js (c:\nbs\afish\src\core\inputAdapter.js:46)
+; new dev/diagnostics.js subscribes to INPUT_F2 / INPUT_F3 bus events only |
+| H-003 stateStore-as-truth | Inspection could mutate spook table | ✅ Requires new read-only castSpookModel.readSpook(coord) accessor that performs decay-to-now WITHOUT writing |
+| H-004 Replay determinism | Verbose flag could fork outcomes | ✅ Math runs unconditionally; flag gates only the trace emission. Toggling F3 cannot change game outcomes |
+| H-015 RNG-stream determinism | Diagnostics drawing from rngStream would desync replays | ✅ F2/F3 NEVER call .next() — read-only accessors only |
+| H-021 Accessible crash-catcher | DevTools console invisible to SR users | ✅ All output routed through accessibleConsole.append(); F3 verbose traces never use UI_ANNOUNCE (would mask gameplay TTS); only the player-initiated F2 one-shot does |
+| D-021 Audio-boundary | — | ✅ Diagnostics module imports only eventBus,
+stateStore (c:\nbs\afish\src\engine.js:58)
+, castSpookModel, worldMap |
+Additional safeguard added: build-flag gating.
+diagnostics.init() (c:\nbs\afish\src\audio\audioEngine.js:178)
+is invoked from
+engine.boot() (c:\nbs\afish\src\engine.js:266)
+only when
+opts.dev === true (c:\nbs\afish\src\audio\audioEngine.js:178)
+(test harness, dev shell, or ?dev=1 URL flag). Production builds have zero diagnostic surface — F2/F3 are unmapped.
+Brief Update — Executed
+project_brief.md (/c:/nbs/afish/project_brief.md)
+:
+`brief_version: 1.78` → `brief_version: 1.83`
+New decision **D-084 X-Ray Vision / Dev Diagnostics (LOCKED v1.83)** appended after D-083 in §6, formally specifying F2 (Inspect Target), F3 (Verbose Math Toggle), the engine-pause ban, the read-only invariants, and the build-flag gating

@@ -281,8 +281,13 @@ function _onFinderResults(payload) {
 }
 
 function _onCastLanded(payload) {
-  const splash = _titleCase(payload?.splashKind ?? 'normal');
-  _announce(`Cast landed. Splash: ${splash}.`);
+  const kind = payload?.splashKind ?? 'NORMAL';
+  const SPLASH_TEXT = {
+    SILENT: 'Perfect, silent entry.',
+    NORMAL: 'Good cast, normal splash.',
+    LOUD:   'Oof, loud splash. That might spook them.',
+  };
+  _announce(SPLASH_TEXT[kind] ?? `Cast landed. Splash: ${_titleCase(kind)}.`);
 }
 
 function _onBirdsNest(payload) {
@@ -314,6 +319,7 @@ function _onStateAnnounce(payload) {
     ROD_BROKEN:      'CRACK! The rod snapped!',
     LURE_RETRIEVED:  'Lure retrieved.',
     LINE_RIPPED:     'Line ripped back.',
+    TIME_TO_FISH:    'Lure is set. Waiting for a bite.',
   };
   const text = STATE_TEXT[payload?.token];
   if (text) _announce(text);

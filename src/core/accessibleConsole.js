@@ -357,5 +357,16 @@ var accessibleConsole = (function () {
       if (_textarea) _textarea.value = '';
       _pending = [];
     },
+
+    /**
+     * Append a single line of text without going through the INFO/WARN/ERROR
+     * severity path.  Used by D-084 diagnostics so F2/F3 output lands in the
+     * console without emitting UI_ANNOUNCE (H-022 safe — no TTS triggered).
+     *
+     * @param {*} text — coerced to string; nullish values become empty string
+     */
+    append: function (text) {
+      _log(String(text ?? ''));
+    },
   };
 }());

@@ -32,6 +32,8 @@
  *   'KeyR'       → R              (Soft Retrieve — D-081 v1.17)
  *   'KeyQ'       → Q              (Power Rip     — D-081 v1.17)
  *   'KeyF'       → F              (Sonar Request — D-041; dual-bound with Enter)
+ *   'F2'         → F2             (Inspect Target — D-084 dev diagnostics)
+ *   'F3'         → F3             (Verbose Math Toggle — D-084 dev diagnostics)
  *
  * UI_ANNOUNCE contract:
  *   Any engine subsystem may emit:  bus.emit('UI_ANNOUNCE', { text: '...' })
@@ -106,6 +108,10 @@ const _KEY_MAP = new Map([
   ['KeyR',       'R'],   // Soft Retrieve
   ['KeyQ',       'Q'],   // Power Rip
   ['KeyF',       'F'],   // Sonar Request (dual-bound with Enter via inputAdapter, D-041)
+
+  // D-084 Dev Diagnostics (only armed when diagnostics.init(true) is called)
+  ['F2',         'F2'],  // Inspect Target
+  ['F3',         'F3'],  // Verbose Math Toggle
 ]);
 
 // ---------------------------------------------------------------------------
