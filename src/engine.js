@@ -65,7 +65,8 @@ import {
 import * as profileStore from './profile/profileStore.js';
 import * as audioEngine  from './audio/audioEngine.js';
 import * as ttsQueue     from './audio/ttsQueue.js';
-import * as diagnostics  from './dev/diagnostics.js';
+import * as diagnostics     from './dev/diagnostics.js';
+import * as worldBootstrap  from './world/worldBootstrap.js';
 import { registerUiManifests } from './ui/index.js';
 
 // ---------------------------------------------------------------------------
@@ -299,6 +300,11 @@ async function boot(opts = {}) {
 
   // D-084: X-Ray Vision dev diagnostics — fully dormant unless opts.dev === true.
   diagnostics.init(opts?.dev === true);
+
+  // v1.90: Seed the stub lake (DOCK POI + 3 tiles) so castPipeline, diagnostics,
+  // and castSpookModel all have a physical world to work against. No-op if the
+  // world was already populated (e.g. by a test harness that called _clear first).
+  worldBootstrap.bootstrap();
 
   // ── Step 4: Install CLI Keyboard Adapter ─────────────────────────────────
   // Translate raw terminal keypress events from process.stdin into properly

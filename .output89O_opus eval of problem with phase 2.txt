@@ -1,0 +1,298 @@
+Searched codebase for "SYSTEM OVERRIDE / ARCHITECTURAL STRATEGY (v1.89 PREP)
+Master Architect, we have a "Ghost Map" problem. While v1.88 successfully bridged the State Store for target retention, our D-084 X-Ray Vision (F2) is returning "coord unavailable" at the DOCK.
+The Problem:
+The DOCK POI appears to be a logical entity without a physical anchor. Because poiGraph.js lacks a centerCoord for the DOCK, the engine cannot resolve dx/dy offsets into global tile coordinates. This breaks:
+**Diagnostics:** We cannot read tile-specific depth/cover/spook.
+**Cast Physics:** Spook is not being applied to the actual map grid.
+The Lookahead (Phase 3 & Navigation):
+We are about to move into Phase 3 (Fish & Fight) and POI Travel. 
+**Fight Logic:** Requires the boat's global position to calculate tension vs. environment (e.g., snagging in cover).
+**Travel Logic:** Requires distance math between POI centerCoords.
+Your Task:
+**Diagnose & Fix `poiGraph.js`:** Review the file and provide the necessary coordinate data to "anchor" the DOCK (and any other stubbed POIs) to a global grid (e.g., DOCK at 50,50). 
+**Future-Proof for Phase 3:** Ensure the coordinate system supports micro-navigation offsets and boundary checks (D-040).
+**Draft the v1.89 Requirements:** Provide the instructions for Sonnet to:
+ - Update `src/world/poiGraph.js` with valid `centerCoord` data.
+ - Ensure `diagnostics.js` can successfully resolve tile traits once the anchor is present.
+ - Verify that the `castPipeline` successfully passes global coordinates to the `castSpookModel`.
+Address the "Ghost Map" issue now so our upcoming navigation and fighting phases have a physical world to exist in.", 23 results. Files: c:\nbs\afish\.output76_phase 1 start.txt, c:\nbs\afish\.output81_harness step2.txt, c:\nbs\afish\.output81_harness step2.txt, c:\nbs\afish\.output84_adding Xray vision and other TTS.txt, c:\nbs\afish\project_brief.md, c:\nbs\afish\src\core\stateStore.js, c:\nbs\afish\src\dev\diagnostics.js, c:\nbs\afish\src\dev\diagnostics.js, c:\nbs\afish\src\fish\fishBehavior.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\navigation\navigation.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness.js, c:\nbs\afish\tests\harness - Copy.js, c:\nbs\afish\tests\harness - Copy.js, c:\nbs\afish\tests\harness - Copy.js, c:\nbs\afish\tests\phase1.test.js
+Thinking: I need to look at the poiGraph.js file to see how it's currently structured and understand the overall architecture.
+Read poiGraph.js
+Thinking: Looking at poiGraph.js more carefully, the architecture is actually solid — it already handles `centerCoord` with proper `{x, y}` validation and `frameRadius` support. The real issue isn't the schema itself, but that POIs aren't being registered at runtime with valid coordinates during normal gameplay or boot. I need to trace where `registerPoi` is being called and see what the actual DOCK POI data looks like when it's registered.
+Searched for regex registerPoi\(|poiGraph\.registerPoi|POI_DOCK (**/src/**/*.js), 8 results. Files: c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js
+Thinking: So `registerPoi` has no production callers in the codebase—only tests invoke it. This means the lake generator, world bootstrap, and all those POI registrations like DOCK and COVE don't actually exist in the live code. Let me trace through what the test harness is doing and see if there's a stub implementation somewhere.
+Searched for regex registerEdge|lakeGenerator|worldBuilder|buildLake|registerTile (**/src/**/*.js), 18 results. Files: c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js
+Searched for regex DOCK|poiId.*=.*[&#39;\&quot;]POI (**/src/**/*.js), 20 results. Files: c:\nbs\afish\src\audio\audioEngine.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\dev\diagnostics.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\structureIndex.js
+Read structureIndex.js, lines 385 to 450
+Read structureIndex.js, lines 450 to 483
+Searched for regex _getTargetAbsCoord|centerCoord|getPoi|applySplash (**/src/casting/castPipeline.js), 13 results. Files: c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Read diagnostics.js, lines 1 to 100
+Read diagnostics.js, lines 100 to 200
+Read castPipeline.js, lines 720 to 760
+Thinking: Now I'm checking whether POIs get registered at any point during the boot sequence, or if there's a runtime code path I'm missing.
+Searched for regex poiGraph\.register|registerPoi\s*\(|world.*boot|world.*init|world.*build|generateWorld (**/src/**/*.js), 20 results. Files: c:\nbs\afish\src\world\worldMap.js, c:\nbs\afish\src\world\structureIndex.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js, c:\nbs\afish\src\world\poiGraph.js
+Searched for regex world|POI|register (**/src/engine.js), 20 results. Files: c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js, c:\nbs\afish\src\engine.js
+Thinking: So there are actually no production callers of `registerPoi` at all — the engine starts up fine without any POIs registered, which explains the "Ghost Map" behavior. I'm also noticing that `structureIndex.js` has its own mock seed data for `'DOCK'` entries with hardcoded absolute coordinates rather than POI-frame offsets, which suggests the coordinate system handling might be inconsistent across different parts of the codebase.
+Looking at how `_resolveTargetCoord` works in diagnostics — it adds the offset to the center point — I can see that if DOCK is anchored at (0,0) with offset (3,1), the result is (3,1), but if the center shifts to (50,50), it becomes (53,51). The real question is whether the mock seed should stay as-is or if we need a proper world bootstrap that registers stub POIs early in the boot sequence, using the same pattern but applied to poiGraph instead of just structureIndex. The user's requirements are straightforward: anchor DOCK at the specified centerCoord, make sure diagnostics can resolve traits, and ensure castPipeline gets the right global coordinates to spook. The cleanest approach would be creating a dedicated world bootstrap module that handles this registration early, with DOCK positioned at (50,50) and a frameRadius that aligns with the D-040 boundary checks.
+The real issue is that `castPipeline` computes the target absolute coordinate using center plus offset, which gives us (53,51) in this case, but then `applySplash` tries to write to a worldMap tile that doesn't exist — there are no `registerTile` calls in production, so it silently returns without doing anything. The complete fix requires registering both the DOCK POI with its centerCoord and the actual worldMap tiles at the absolute positions where the mock candidates resolve to, then wiring this bootstrap into `engine.boot()` before TOURNAMENT_ACTIVE runs. I should also align the structureIndex mock's `coord` field to match the absolute tile coordinate so the data is internally consistent.
+Architectural Ruling — The Ghost Map (v1.89 Prep)
+1. Diagnosis: Confirmed and Worse Than Stated
+The schema in
+poiGraph.js (/c:/nbs/afish/src/world/poiGraph.js)
+is already correct —
+registerPoi() (c:\nbs\afish\src\world\poiGraph.js:132)
+validates
+centerCoord:{x,y} (c:\nbs\afish\src\world\poiGraph.js:162)
+,
+frameRadius (c:\nbs\afish\src\casting\castPipeline.js:683)
+, and
+draftClass (c:\nbs\afish\src\world\poiGraph.js:127)
+. The problem is that nothing in production ever calls it. Grep confirms: zero invocations of
+poiGraph.registerPoi (c:\nbs\afish\src\world\poiGraph.js:132)
+or
+worldMap.registerTile (c:\nbs\afish\src\casting\castSpookModel.js:46)
+anywhere under
+src (/c:/nbs/afish/src/)
+outside world/poiGraph.js and world/worldMap.js themselves.
+The only POI data that exists at runtime is the mock seed at the bottom of
+structureIndex.js (/c:/nbs/afish/src/world/structureIndex.js)
+(lines 392–501), which directly
+_index.set('DOCK', […]) (c:\nbs\afish\src\world\structureIndex.js:72)
+— bypassing both
+poiGraph (c:\nbs\afish\src\world\poiGraph.js:62)
+and
+worldMap (c:\nbs\afish\src\casting\castSpookModel.js:46)
+. Consequences:
+Subsystem Symptom
+diagnostics._resolveTargetCoord (c:\nbs\afish\src\dev\diagnostics.js:110)
+|
+poiGraph.getPoi('DOCK') (c:\nbs\afish\src\world\poiGraph.js:62)
+→ undefined → returns null → F2 prints
+coord unavailable (c:\nbs\afish\src\casting\castSpookModel.js:85)
+. |
+|
+castPipeline._getPoiCenter (c:\nbs\afish\src\casting\castPipeline.js:730)
+| Same lookup → null →
+_getTargetAbsCoord (c:\nbs\afish\src\casting\castPipeline.js:749)
+returns null → spook coord is null. |
+|
+castSpookModel.applySplash (c:\nbs\afish\src\casting\castSpookModel.js:160)
+| Even if a coord were derived,
+worldMap.getTile() (c:\nbs\afish\src\casting\castSpookModel.js:46)
+returns undefined (no tiles registered) → guard at line ~162 (if (!tile) return) → spook never persists. |
+|
+fishBehavior.readSpook (c:\nbs\afish\src\casting\castSpookModel.js:85)
+at strike-time | Reads 0 because tile state never existed. Bites fire on phantom spooked water. |
+So the "Ghost Map" is wider than the user's two symptoms: the spook system has been a no-op in production since inception. Every test that exercises spook works because the harness manually calls
+worldMap.registerTile (c:\nbs\afish\src\casting\castSpookModel.js:46)
+and
+poiGraph.registerPoi (c:\nbs\afish\src\world\poiGraph.js:132)
+in its setup; production has neither.
+2. Architectural Strategy: Introduce a World Bootstrap Module
+Do not put the data inside
+poiGraph.js (/c:/nbs/afish/src/world/poiGraph.js)
+itself. That file is a pure data structure (graph topology); seeding it with one specific lake's contents would couple infrastructure to content and break test isolation. Instead introduce a single new module src/world/worldBootstrap.js whose sole job is to populate
+poiGraph (c:\nbs\afish\src\world\poiGraph.js:62)
+and
+worldMap (c:\nbs\afish\src\casting\castSpookModel.js:46)
+with the Phase-2 stub lake. It is the production analogue of the harness's buildTestWorld().
+This pattern:
+Keeps
+poiGraph.js (/c:/nbs/afish/src/world/poiGraph.js)
+and
+worldMap.js (/c:/nbs/afish/src/world/worldMap.js)
+pure registries (clean H-014 boundary).
+Localises all "magic numbers" (coords, depths, cover types) to one file that Phase 4 can replace with a real generator.
+Is trivially testable (harness can
+_clear() (c:\nbs\afish\src\world\poiGraph.js:395)
+and re-bootstrap deterministically).
+Aligns with the existing convention used by
+audioEngine.init() (c:\nbs\afish\src\audio\audioEngine.js:178)
+,
+ttsQueue.init() (c:\nbs\afish\src\audio\ttsQueue.js:100)
+,
+diagnostics.init() (c:\nbs\afish\src\dev\diagnostics.js:231)
+— a single bootstrap() entry point called from
+engine.boot() (c:\nbs\afish\src\engine.js:267)
+.
+Coordinate decision: DOCK at `(50, 50)` as the user proposed. Rationale:
+All current mock-candidate offsets are in `[-2, +4]` — anchoring at 50 gives ≥48 of headroom in every direction, so D-040 frame-boundary penalties never trip on the negative axis edge case (Math.abs of negative offsets stays cleanly bounded).
+Round number simplifies mental debugging and harness expectations.
+frameRadius: 10 (c:\nbs\afish\src\casting\castPipeline.js:683)
+matches the existing
+castPipeline._getFrameRadius (c:\nbs\afish\src\casting\castPipeline.js:719)
+default fallback, so no implicit behaviour changes.
+**
+draftClass: SHALLOW (c:\nbs\afish\src\world\poiGraph.js:82)
+** — dock is shore-adjacent; consistent with the mock candidates'
+draftClass (c:\nbs\afish\src\world\poiGraph.js:127)
+field.
+3. Invariant Audit
+Invariant Verdict Notes
+H-003 (sole writer of
+tile.state.spook (c:\nbs\afish\src\casting\castSpookModel.js:94)
+) | Preserved | Bootstrap only calls
+registerTile (c:\nbs\afish\src\world\worldMap.js:276)
+(creates the tile with default state). It never mutates
+spook (c:\nbs\afish\src\casting\castSpookModel.js:94)
+directly — that remains castSpookModel's job. |
+| H-014 (no cross-imports between casting/world/fish modules) | Clean | worldBootstrap.js lives in world/; it imports
+poiGraph (c:\nbs\afish\src\world\poiGraph.js:62)
+and
+worldMap (c:\nbs\afish\src\world\worldMap.js:48)
+(both same dir) — no cross-domain hop. |
+| H-005 (no stray listeners) | Untouched | Bootstrap registers data, not subscriptions. Zero bus listeners. |
+| D-013/D-038/D-039 (no engine pause, deterministic spook) | Untouched | One-shot synchronous registration at boot. |
+| H-015 (RNG determinism) | Untouched | No
+rng.next() (c:\nbs\afish\src\casting\castPipeline.js:199)
+calls — all data is static literals. |
+| D-021 (single boot wiring) | Reinforced | One new bootstrap() call at known position in
+engine.boot() (c:\nbs\afish\src\engine.js:267)
+. |
+4. v1.89 Execution Requirements for Sonnet
+File 1: CREATE src/world/worldBootstrap.js
+A new module exporting a single function bootstrap() that, when called, registers:
+One POI:
+```
+poiGraph.registerPoi({
+  id: 'DOCK',
+  label: 'Main Dock',
+  centerCoord: { x: 50, y: 50 },
+  frameRadius: 10,
+  draftClass: 'SHALLOW',
+  description: 'Wooden pilings and shaded structure along the south shore.',
+});
+```
+Three tiles matching the structureIndex mock candidates — coordinates are
+centerCoord + offset (c:\nbs\afish\src\world\poiGraph.js:125)
+for each existing mock entry so that
+castPipeline._getTargetAbsCoord (c:\nbs\afish\src\casting\castPipeline.js:749)
+↔
+worldMap.getTile (c:\nbs\afish\src\world\worldMap.js:372)
+↔ structureIndex all agree:
+Mock candidate Offset (dx,dy) Absolute coord (centerCoord + offset) depth.bottomM cover.type bottom.primary tags
+DOCK_mock_pilings (0, -2) (50, 48) 2.5 DOCK GRAVEL
+['AMBUSH_POINT','SHADED_DAY'] (c:\nbs\afish\src\world\structureIndex.js:64)
+|
+| DOCK_mock_weedbed | (3, 1) | (53, 51) | 1.5 | WEEDBED | SAND |
+['WEEDBED_EDGE'] (c:\nbs\afish\src\world\structureIndex.js:58)
+|
+| DOCK_mock_dropoff | (-2, 4) | (48, 54) | 5.0 | NONE | ROCK |
+['DROP_OFF_EDGE','TRANSITION'] (c:\nbs\afish\src\world\structureIndex.js:63)
+|
+Each
+worldMap.registerTile({...}) (c:\nbs\afish\src\world\worldMap.js:276)
+call must satisfy the existing schema in
+worldMap.js (/c:/nbs/afish/src/world/worldMap.js)
+(read its validator before writing):
+traits.depth.{minM, bottomM} (c:\nbs\afish\src\world\worldMap.js:144)
+,
+traits.cover.{type, density, snagRisk, shadeFactor} (c:\nbs\afish\src\world\worldMap.js:316)
+,
+traits.bottom.{primary} (c:\nbs\afish\src\world\worldMap.js:307)
+,
+traits.reach.{draftClass, fromDockMin} (c:\nbs\afish\src\world\worldMap.js:319)
+,
+traits.tags (c:\nbs\afish\src\world\worldMap.js:326)
+, plus
+poiId: 'DOCK' (c:\nbs\afish\src\casting\castPipeline.js:721)
+so
+tilesByPoi('DOCK') (c:\nbs\afish\src\world\worldMap.js:386)
+returns them. Match every numeric value to the corresponding
+structureIndex.js (/c:/nbs/afish/src/world/structureIndex.js)
+mock entry — no improvisation. The bootstrap must be idempotent (guard with a _initialised boolean and bail on second call).
+⚠️ Sonnet: read
+worldMap.js (/c:/nbs/afish/src/world/worldMap.js)
+lines 130–320 BEFORE writing to confirm the exact
+traits.* (c:\nbs\afish\src\world\worldMap.js:137)
+schema and any
+density (c:\nbs\afish\src\world\structureIndex.js:128)
+/
+snagRisk (c:\nbs\afish\src\world\structureIndex.js:223)
+/
+shadeFactor (c:\nbs\afish\src\world\structureIndex.js:224)
+fields the validator requires. Do not guess.
+File 2: EDIT
+engine.js (/c:/nbs/afish/src/engine.js)
+Add the import and call **after
+diagnostics.init(...) (c:\nbs\afish\src\dev\diagnostics.js:231)
+and BEFORE
+registerUiManifests() (c:\nbs\afish\src\engine.js:69)
+**. Position is important: UI manifests'
+onMount (c:\nbs\afish\src\casting\castPipeline.js:1342)
+may read POI data when entering
+TOURNAMENT_ACTIVE (c:\nbs\afish\src\engine.js:388)
+, and the harness path also expects the world to exist at mode-transition time.
+```
+import * as worldBootstrap from './world/worldBootstrap.js';
+// …
+diagnostics.init(opts?.dev === true);
+worldBootstrap.bootstrap();   // v1.89: anchor the stub lake to global coords
+registerUiManifests();
+```
+File 3: EDIT
+.changelog.md (/c:/nbs/afish/.changelog.md)
+Prepend a ## v1.89 — Ghost Map: Stub Lake Anchored entry describing:
+The pre-existing bug (no production
+registerPoi (c:\nbs\afish\src\world\poiGraph.js:132)
+/
+registerTile (c:\nbs\afish\src\world\worldMap.js:276)
+calls; spook silently a no-op; F2 returned
+coord unavailable (c:\nbs\afish\src\casting\castSpookModel.js:85)
+; D-073 retained-target depth/cover lookups returned defaults).
+The fix: new `src/world/worldBootstrap.js` registers DOCK at `(50,50)` with
+frameRadius=10 (c:\nbs\afish\src\casting\castPipeline.js:683)
+and three tiles at (50,48), (53,51), (48,54) matching the existing
+structureIndex.js (/c:/nbs/afish/src/world/structureIndex.js)
+mock candidates verbatim.
+Why bootstrap lives in its own file rather than inside
+poiGraph.js (/c:/nbs/afish/src/world/poiGraph.js)
+(purity / Phase 4 replacement / testability).
+Architectural note:
+structureIndex.js (/c:/nbs/afish/src/world/structureIndex.js)
+lines 392+ mock seed is NOT removed yet — the offsets there now match the worldMap tiles so both subsystems agree. Removing the mock and pointing structureIndex at
+worldMap.tilesByPoi() (c:\nbs\afish\src\world\worldMap.js:386)
+is queued for Phase 4 lake-generator work.
+Verification
+After Sonnet's changes, the following must all hold (run them, don't just assert them):
+1.
+node tests/harness.js (c:\nbs\afish\src\world\poiGraph.js:159)
+— Sections 1, 2, 5, 6, 7, 8, 9 must remain at their current pass counts. The harness uses
+poiGraph._clear() (c:\nbs\afish\src\world\poiGraph.js:395)
+and
+worldMap._clear() (c:\nbs\afish\src\world\worldMap.js:504)
+between phases, so the bootstrap should run before but not interfere with harness setup. If a section breaks because the harness double-registers DOCK, the bootstrap is correct — the harness needs
+_clear() (c:\nbs\afish\src\world\poiGraph.js:395)
+called first (this is harness scaffolding, not a v1.89 regression).
+Manually verify in browser at `index.html?dev=1`:
+- Start tournament, scan, lock a target, cast.
+- Press **F2**. Must announce `[F2] poi=DOCK depth=2.5m cover=DOCK spookBase=0 spookNow=0 …` (or matching values for whichever candidate was locked).
+- Cast LOUD on the same target twice. Wait 5 s. Press F2 again. Must show
+spookBase=3+ (c:\nbs\afish\src\dev\diagnostics.js:165)
+(LOUD splash = +3, +3 again capped at 5) and
+spookNow (c:\nbs\afish\src\dev\diagnostics.js:166)
+decaying.
+This proves the full chain: poiGraph anchor → castPipeline → castSpookModel.applySplash → worldMap tile → readSpookDetail → F2 output.
+Run any Phase-1 leak test that was previously green to confirm no new bus listeners or clock handles.
+Constraints
+Do **not** delete or rewrite the mock seed in
+structureIndex.js (/c:/nbs/afish/src/world/structureIndex.js)
+. That's Phase 4 work and out of scope.
+Do **not** rename
+'DOCK' (c:\nbs\afish\src\world\structureIndex.js:72)
+to &#39;POI_DOCK&#39;. The mock uses
+'DOCK' (c:\nbs\afish\src\world\structureIndex.js:72)
+and changing it now would cascade through harness and structureIndex.
+Do **not** add edges (
+registerEdge (c:\nbs\afish\src\world\poiGraph.js:189)
+) yet — Phase 3 navigation will define the first edge between DOCK and the second POI. Today DOCK is a single isolated node; that's fine because Phase 2 has no travel.
+Bootstrap **must** check
+worldMap.tileCount() === 0 (c:\nbs\afish\src\world\worldMap.js:48)
+and
+poiGraph.poiCount() === 0 (c:\nbs\afish\src\world\poiGraph.js:62)
+before registering, then bail. This makes it safe to re-call from the harness and from a future restartTournament() path.
+Cleared for execution. Sonnet, await the v1.89 OVERRIDE message before writing
+Read structureIndex.js, lines 450 to 483
+Searched for regex _getTargetAbsCoord|centerCoord|getPoi|applySplash (**/src/casting/castPipeline.js), 13 results. Files: c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js, c:\nbs\afish\src\casting\castPipeline.js
+Read diagnostics.js, lines 1 to 100
+code.
